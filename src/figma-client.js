@@ -401,6 +401,7 @@ export class FigmaClient {
       const fillCode = this.generateFillCode(bg, `f${frameIdx}`);
       const strokeCode = stroke ? this.generateStrokeCode(stroke, `f${frameIdx}`) : { code: '' };
       const effectsCode = this.generateEffectsCode(props, `f${frameIdx}`);
+      const imageCode = props.image ? this.generateImageFillCode(props.image, `f${frameIdx}`, props.imageScale) : '';
 
       // Generate child code
       let childCounter = 0;
@@ -505,6 +506,7 @@ export class FigmaClient {
         ${fillCode.code}
         ${strokeCode.code}
         ${effectsCode}
+        ${imageCode}
         f${frameIdx}.layoutMode = '${flex === 'row' ? 'HORIZONTAL' : 'VERTICAL'}';
         ${wrap && flex === 'row' ? `f${frameIdx}.layoutWrap = 'WRAP';` : ''}
         f${frameIdx}.itemSpacing = ${itemGap};
@@ -1207,6 +1209,7 @@ export class FigmaClient {
     const rootFillCode = this.generateFillCode(bg, 'frame');
     const rootStrokeCode = stroke ? this.generateStrokeCode(stroke, 'frame', strokeWidth, strokeAlignProp) : { code: '', usesVars: false };
     const rootEffectsCode = this.generateEffectsCode(props, 'frame');
+    const rootImageCode = props.image ? this.generateImageFillCode(props.image, 'frame', props.imageScale) : '';
 
     // Variable loading code with caching (only if any vars used)
     const varLoadCode = usesVars ? `
@@ -1265,6 +1268,7 @@ export class FigmaClient {
         ${rootFillCode.code}
         ${rootStrokeCode.code}
         ${rootEffectsCode}
+        ${rootImageCode}
         frame.layoutMode = '${flex === 'row' ? 'HORIZONTAL' : 'VERTICAL'}';
         ${wrap && flex === 'row' ? `frame.layoutWrap = 'WRAP';` : ''}
         frame.itemSpacing = ${gap};
@@ -1361,6 +1365,24 @@ export class FigmaClient {
       code: `${elementVar}.${property} = [{type:'SOLID',color:${this.hexToRgbCode(value)}}];`,
       usesVars: false
     };
+  }
+
+  /**
+   * Generate code that creates an image fill from a URL.
+   * Uses figma.createImageAsync for remote URLs.
+   * Returns code that prepends an image paint to fills.
+   * scaleMode: FILL (default), FIT, CROP, TILE
+   */
+  generateImageFillCode(url, elementVar, scaleMode = 'FILL') {
+    if (!url || typeof url !== 'string') return '';
+    const mode = String(scaleMode).toUpperCase();
+    const validModes = ['FILL', 'FIT', 'CROP', 'TILE'];
+    const finalMode = validModes.includes(mode) ? mode : 'FILL';
+    const safeName = elementVar.replace(/[^a-zA-Z0-9]/g, '');
+    // Image REPLACES fills (not appends) — user expects bg-style behavior
+    return `
+      const __img${safeName} = await figma.createImageAsync(${JSON.stringify(url)});
+      ${elementVar}.fills = [{ type: 'IMAGE', imageHash: __img${safeName}.hash, scaleMode: '${finalMode}' }];`;
   }
 
   /**
