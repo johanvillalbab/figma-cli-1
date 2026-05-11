@@ -396,7 +396,7 @@ async function handleRequest(req, res) {
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          const { action, code, jsx, jsxArray, gap, vertical } = JSON.parse(body);
+          const { action, code, jsx, jsxArray, gap, vertical, collection } = JSON.parse(body);
           let result;
 
           const execWithTimeout = async (fn, timeoutMs = 30000) => {
@@ -424,7 +424,7 @@ async function handleRequest(req, res) {
               // Single eval for ALL frames (10x faster than loop)
               const ClientClass = await getFigmaClient();
               const batchParser = new ClientClass();
-              if (data.collection) batchParser.setCollection(data.collection);
+              if (collection) batchParser.setCollection(collection);
               const batchCode = batchParser.parseJSXBatch(jsxArray, {
                 gap: gap || 40,
                 vertical: vertical || false
