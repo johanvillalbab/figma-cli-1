@@ -69,6 +69,34 @@ When the user asks for components, two distinct universes exist:
 
 **Don't use `rounded="var:md"` in JSX.** `rounded=` takes a number. Look up the radius token's px value via `figma-cli var list` (e.g. `rounded={8}`).
 
+### 🎯 PINNING TO A SPECIFIC COLLECTION (when the user names one)
+
+When the user has multiple variable collections (e.g. `figma`, `cursor`, `airbnb`, `miro`) and asks for variables from **a named one**, you MUST pass `--collection <name>` to `render` / `render-batch`. Otherwise the resolver picks an arbitrary collection (shadcn-priority by default) and `var:primary` ends up resolving against the wrong system.
+
+**Detect the pattern from user wording:**
+
+| User says | Add to the command |
+|---|---|
+| "use **figma** variables" / "**figma** style" / "**figma** collection" | `--collection figma` |
+| "use **airbnb** variables" / "in **airbnb** style" | `--collection airbnb` |
+| "**cursor** themed" / "use **cursor** tokens" | `--collection cursor` |
+| Generic "use variables" / "themed" (no system named) | use the most-recently-imported collection if known; otherwise ask which one |
+
+**Example — the right command for "create 4 buttons use figma variables collection":**
+
+```bash
+figma-cli render-batch '[
+  "<Frame name=\"Button Primary\" bg=\"var:primary\" px={20} py={12} rounded={8} flex=\"row\" justify=\"center\" items=\"center\"><Text color=\"var:on-primary\" size={14} weight=\"medium\">Primary</Text></Frame>",
+  "<Frame name=\"Button Secondary\" bg=\"var:surface-card\" stroke=\"var:hairline\" strokeWidth={1} px={20} py={12} rounded={8} flex=\"row\" justify=\"center\" items=\"center\"><Text color=\"var:ink\" size={14} weight=\"medium\">Secondary</Text></Frame>",
+  "<Frame name=\"Button Outline\" stroke=\"var:hairline-strong\" strokeWidth={1} px={20} py={12} rounded={8} flex=\"row\" justify=\"center\" items=\"center\"><Text color=\"var:ink\" size={14} weight=\"medium\">Outline</Text></Frame>",
+  "<Frame name=\"Button Ghost\" px={20} py={12} rounded={8} flex=\"row\" justify=\"center\" items=\"center\"><Text color=\"var:body\" size={14} weight=\"medium\">Ghost</Text></Frame>"
+]' --direction row --collection figma
+```
+
+That one line is correct, atomic, and produces 4 independent buttons whose `var:` references all resolve against the `figma` collection — not Cursor, not Airbnb. **One call, no fallback to individual `render` invocations needed.**
+
+**Per-attribute override:** `bg="var:cursor:primary"` even forces a specific collection for one binding (useful when mixing systems intentionally).
+
 ### 🛑 MULTI-ITEM CREATION (the rule that gets violated the most)
 
 **The intent test:** "user asked for N <noun>" → **N independent top-level nodes on the canvas**. NOT one wrapper Component containing N children. NOT one Frame with `flex="row"`. N separate nodes.
