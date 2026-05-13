@@ -490,6 +490,13 @@ export class FigmaClient {
       const wrap = props.wrap === true || props.wrap === 'true';
       const wrapGap = Number(props.wrapGap || props.counterAxisSpacing || 0);
       const hug = props.hug || '';
+      // Generic node-level visuals that just need straight property
+      // assignment. Reading these here means callers can drop opacity / lock
+      // / visible on any frame without us having to thread each through the
+      // whole code-gen pipeline.
+      const opacity = props.opacity !== undefined ? Number(props.opacity) : null;
+      const visible = props.visible === false || props.visible === 'false' ? false : null;
+      const locked = props.locked === true || props.locked === 'true' ? true : null;
       const hugWidth = hug === 'both' || hug === 'w' || hug === 'width';
       const hugHeight = hug === 'both' || hug === 'h' || hug === 'height';
       const clip = props.clip === 'true' || props.clip === true;
@@ -618,6 +625,9 @@ export class FigmaClient {
         f${frameIdx}.counterAxisSizingMode = '${flex === 'col' ? (hugWidth || !hasExplicitWidth ? 'AUTO' : 'FIXED') : (hugHeight || !hasExplicitHeight ? 'AUTO' : 'FIXED')}';
         ${wrap && flex === 'row' && wrapGap > 0 ? `f${frameIdx}.counterAxisSpacing = ${wrapGap};` : ''}
         f${frameIdx}.clipsContent = ${clip};
+        ${opacity !== null ? `f${frameIdx}.opacity = ${opacity};` : ''}
+        ${visible === false ? `f${frameIdx}.visible = false;` : ''}
+        ${locked === true ? `f${frameIdx}.locked = true;` : ''}
         ${childCode}
         results.push({ id: f${frameIdx}.id, name: f${frameIdx}.name, width: f${frameIdx}.width, height: f${frameIdx}.height });
         ${vertical ? `posY += f${frameIdx}.height + ${gap};` : `posX += f${frameIdx}.width + ${gap};`}
@@ -980,6 +990,10 @@ export class FigmaClient {
     const y = props.y || 0;
     // New: clip defaults to false (don't clip auto-layout overflow). overflow="hidden" also sets clip.
     const clip = props.clip === 'true' || props.clip === true || props.overflow === 'hidden';
+    // Generic node-level visuals — apply on the root frame too (single-render path)
+    const opacity = props.opacity !== undefined ? Number(props.opacity) : null;
+    const visible = props.visible === false || props.visible === 'false' ? false : null;
+    const locked = props.locked === true || props.locked === 'true' ? true : null;
     // New: hug for auto-sizing (hug="both" | "w" | "h" | "width" | "height")
     const hug = props.hug || '';
     const hugWidth = hug === 'both' || hug === 'w' || hug === 'width';
@@ -1085,6 +1099,10 @@ export class FigmaClient {
           const fPosition = item.position || 'auto';
           const fAbsoluteX = item.x !== undefined ? Number(item.x) : 0;
           const fAbsoluteY = item.y !== undefined ? Number(item.y) : 0;
+          // Generic node-level visuals (same as top-level)
+          const fOpacity = item.opacity !== undefined ? Number(item.opacity) : null;
+          const fVisible = item.visible === false || item.visible === 'false' ? false : null;
+          const fLocked = item.locked === true || item.locked === 'true' ? true : null;
           // Edge-anchored absolute positioning (per directededges Absolute
           // Positioning spec). top/right/bottom/left are edge-relative. If
           // both opposite edges are given → STRETCH (and width/height are
@@ -1101,15 +1119,22 @@ export class FigmaClient {
           // If any edge attr is set, position defaults to absolute.
           const effectivePosition = hasEdgeAttrs ? 'absolute' : fPosition;
 
-          // Support w="fill" for nested frames (check BEFORE setting fWidth/fHeight)
+          // Support w="fill" / "hug" keywords on nested frames. fill = stretch
+          // to fill the auto-layout cross-axis; hug = size to children.
+          // These are NOT numeric — never interpolate into resize() directly.
           const fillWidth = item.w === 'fill';
           const fillHeight = item.h === 'fill';
+          const hugWidth = item.w === 'hug';
+          const hugHeight = item.h === 'hug';
 
           // HUG by default, FIXED only if explicit numeric size given
-          const hasWidth = (item.w !== undefined || item.width !== undefined) && !fillWidth;
-          const hasHeight = (item.h !== undefined || item.height !== undefined) && !fillHeight;
-          const fWidth = fillWidth ? 100 : (item.w || item.width || 100);
-          const fHeight = fillHeight ? 100 : (item.h || item.height || 40);
+          const isNumeric = v => v !== undefined && v !== 'fill' && v !== 'hug';
+          const numericW = isNumeric(item.w) ? item.w : isNumeric(item.width) ? item.width : undefined;
+          const numericH = isNumeric(item.h) ? item.h : isNumeric(item.height) ? item.height : undefined;
+          const hasWidth = numericW !== undefined;
+          const hasHeight = numericH !== undefined;
+          const fWidth = numericW !== undefined ? numericW : 100;
+          const fHeight = numericH !== undefined ? numericH : 40;
 
           // Map align/justify to Figma values
           const alignMap = { start: 'MIN', center: 'CENTER', end: 'MAX', stretch: 'STRETCH' };
@@ -1121,11 +1146,12 @@ export class FigmaClient {
           const frameStrokeCode = fStroke ? this.generateStrokeCode(fStroke, `el${idx}`, fStrokeWidth, fStrokeAlign) : { code: '' };
           const frameEffectsCode = this.generateEffectsCode(item, `el${idx}`);
 
-          // Determine sizing: FILL, FIXED, or HUG for each axis
+          // Determine sizing: FILL, FIXED, or HUG for each axis. An explicit
+          // `hug` keyword forces HUG regardless of whether a number was given.
           const wantFillH = fillWidth || (fGrow !== null && parentFlex === 'row');
           const wantFillV = fillHeight || (fGrow !== null && parentFlex === 'col');
-          const hSizing = wantFillH ? 'FILL' : (hasWidth ? 'FIXED' : 'HUG');
-          const vSizing = wantFillV ? 'FILL' : (hasHeight ? 'FIXED' : 'HUG');
+          const hSizing = wantFillH ? 'FILL' : hugWidth ? 'HUG' : (hasWidth ? 'FIXED' : 'HUG');
+          const vSizing = wantFillV ? 'FILL' : hugHeight ? 'HUG' : (hasHeight ? 'FIXED' : 'HUG');
 
           return `
         __currentNode = 'Frame: ${fName.replace(/'/g, "\\'")}';
@@ -1146,6 +1172,9 @@ export class FigmaClient {
         el${idx}.primaryAxisAlignItems = '${fJustifyVal}';
         el${idx}.counterAxisAlignItems = '${fAlignVal}';
         el${idx}.clipsContent = ${fClip};
+        ${fOpacity !== null ? `el${idx}.opacity = ${fOpacity};` : ''}
+        ${fVisible === false ? `el${idx}.visible = false;` : ''}
+        ${fLocked === true ? `el${idx}.locked = true;` : ''}
         ${parentVar}.appendChild(el${idx});
         el${idx}.layoutSizingHorizontal = '${hSizing}';
         el${idx}.layoutSizingVertical = '${vSizing}';
@@ -1521,6 +1550,9 @@ export class FigmaClient {
         ${fillHeight ? `frame.layoutSizingVertical = 'FILL';` : ''}
         ${wrap && flex === 'row' && wrapGap > 0 ? `frame.counterAxisSpacing = ${wrapGap};` : ''}
         frame.clipsContent = ${clip};
+        ${opacity !== null ? `frame.opacity = ${opacity};` : ''}
+        ${visible === false ? `frame.visible = false;` : ''}
+        ${locked === true ? `frame.locked = true;` : ''}
 
         ${childCode}
 
