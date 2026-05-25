@@ -135,5 +135,39 @@
       },
       "required": ["image_path"]
     }
+  },
+  {
+    "name": "figma_gradient_mesh",
+    "description": "Generate a mesh-gradient wallpaper from a color palette (no source image). Builds a smooth blob-blended background by stacking layer-blurred ellipses inside a clipping frame. Use when the user asks to create a wallpaper, mesh gradient, aurora/blossom-style background, or 'gradient from these colors'. Creates a new frame by default, or fills an existing frame with apply_to.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "colors": {
+          "type": "string",
+          "description": "Comma-separated hex colors, 2 or more. Example: '#FF6B9D,#FEC860,#43E97B,#38A1DB,#A855F7'."
+        },
+        "apply_to": {
+          "type": "string",
+          "description": "Optional Figma FRAME id to populate. If omitted, a new frame is created."
+        },
+        "size": {
+          "type": "string",
+          "description": "Frame size for a new wallpaper as WxH (e.g. '1920x1080'). Ignored when apply_to is set. Default 1920x1080."
+        },
+        "base": {
+          "type": "string",
+          "description": "Optional base fill hex behind the blobs. Defaults to the palette average."
+        },
+        "blur": {
+          "type": "number",
+          "description": "Blur radius as fraction of min(W, H). Default 0.42."
+        },
+        "name": {
+          "type": "string",
+          "description": "Name for the created frame. Default 'Mesh Wallpaper'."
+        }
+      },
+      "required": ["colors"]
+    }
   }
 ]

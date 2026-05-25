@@ -205,6 +205,17 @@ const toolHandlers = {
     args.push('--json');
     return runFigmaCliFallback(args, { timeout: 60000 });
   },
+
+  async figma_gradient_mesh({ colors, apply_to, size, base, blur, name }) {
+    const args = ['gradient', 'mesh', colors];
+    if (apply_to) args.push('--apply-to', apply_to);
+    if (size) args.push('--size', size);
+    if (base) args.push('--base', base);
+    if (blur != null) args.push('--blur', String(blur));
+    if (name) args.push('--name', name);
+    args.push('--json');
+    return runFigmaCliFallback(args, { timeout: 60000 });
+  },
 };
 
 async function dispatchTool(name, input) {

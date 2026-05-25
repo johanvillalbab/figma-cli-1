@@ -350,3 +350,91 @@ export function extractMesh(path, opts = {}) {
   };
 }
 
+// ─── MESH from a palette (no source image) ──────────────────────────────
+//
+// Generates a mesh-gradient wallpaper recipe from a list of colors. Blobs
+// are distributed around the frame so each color anchors a region; they're
+// pushed slightly off-frame so the clip shows only the soft bleed (no hard
+// ellipse edges). Same blur-stack the image extractor produces, so the
+// applier is shared.
+
+function hexToRgb(h) {
+  h = h.replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+function normalizeHex(h) {
+  return rgbToHex(hexToRgb(h));
+}
+
+// Anchor positions (fx, fy, r) for N colors, ordered so palettes read
+// pleasantly. Positions sit just outside the frame so only the bleed shows.
+const MESH_LAYOUTS = {
+  2: [
+    { fx: -0.10, fy: -0.05, r: 0.70 },
+    { fx: 1.10, fy: 1.05, r: 0.70 },
+  ],
+  3: [
+    { fx: -0.10, fy: -0.05, r: 0.65 },
+    { fx: 1.10, fy: 0.10, r: 0.65 },
+    { fx: 0.50, fy: 1.10, r: 0.65 },
+  ],
+  4: [
+    { fx: -0.05, fy: -0.05, r: 0.55 },
+    { fx: 1.05, fy: -0.05, r: 0.55 },
+    { fx: -0.05, fy: 1.05, r: 0.55 },
+    { fx: 1.05, fy: 1.05, r: 0.55 },
+  ],
+  5: [
+    { fx: -0.05, fy: -0.05, r: 0.50 },
+    { fx: 1.05, fy: -0.05, r: 0.50 },
+    { fx: -0.05, fy: 1.05, r: 0.50 },
+    { fx: 1.05, fy: 1.05, r: 0.50 },
+    { fx: 0.50, fy: 0.50, r: 0.45 },
+  ],
+  6: [
+    { fx: -0.08, fy: 0.45, r: 0.50 },
+    { fx: 1.08, fy: 0.55, r: 0.50 },
+    { fx: -0.05, fy: -0.05, r: 0.45 },
+    { fx: 1.05, fy: -0.05, r: 0.45 },
+    { fx: -0.05, fy: 1.05, r: 0.45 },
+    { fx: 1.05, fy: 1.05, r: 0.45 },
+  ],
+};
+
+// Build the layout for arbitrary N (>6): corners first, then evenly spaced
+// points along the top and bottom edges.
+function meshLayoutForCount(n) {
+  if (MESH_LAYOUTS[n]) return MESH_LAYOUTS[n];
+  const pts = [
+    { fx: -0.05, fy: -0.05, r: 0.45 },
+    { fx: 1.05, fy: -0.05, r: 0.45 },
+    { fx: -0.05, fy: 1.05, r: 0.45 },
+    { fx: 1.05, fy: 1.05, r: 0.45 },
+  ];
+  const extra = n - 4;
+  for (let i = 0; i < extra; i++) {
+    const fx = (i + 1) / (extra + 1);
+    const fy = i % 2 === 0 ? -0.05 : 1.05;
+    pts.push({ fx, fy, r: 0.42 });
+  }
+  return pts.slice(0, n);
+}
+
+export function buildMeshFromColors(colors, opts = {}) {
+  const hexes = colors.map(normalizeHex);
+  if (hexes.length < 2) throw new Error('Need at least 2 colors for a mesh gradient.');
+  const layout = meshLayoutForCount(hexes.length);
+  const blobs = layout.map((pos, i) => ({ ...pos, color: hexes[i] }));
+  // Base = average of the palette, so any gaps between blobs read as a
+  // believable mid-tone rather than a flat default.
+  const base = opts.base ? normalizeHex(opts.base) : rgbToHex(averageColor(hexes.map(hexToRgb)));
+  return {
+    mode: 'mesh',
+    base,
+    blobs,
+    blurFraction: opts.blur != null ? opts.blur : 0.42,
+  };
+}
+

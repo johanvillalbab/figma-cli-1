@@ -156,7 +156,28 @@ figma-cli tokens import-design-md /path/to/DESIGN.md --print-context
 
 ---
 
-## Extract gradients from images
+## Gradients & mesh wallpapers
+
+figma-cli both **generates** gradients from a palette and **extracts** them from existing images.
+
+### Generate a mesh wallpaper from a palette
+
+No image needed — hand it a list of colors and it builds a smooth mesh-gradient wallpaper (heavily layer-blurred ellipses inside a clipping frame, distributed around the canvas):
+
+```bash
+# New 1920x1080 wallpaper from a 5-color palette
+figma-cli gradient mesh "#FF6B9D,#FEC860,#43E97B,#38A1DB,#A855F7"
+
+# Custom size + name, softer blend
+figma-cli gradient mesh "#0E0820,#FF1F8E,#00E5FF" --size 1200x700 --name "Cyberpunk" --blur 0.5
+
+# Fill an existing frame instead of creating one
+figma-cli gradient mesh "#2A3F6A,#FF6F3D,#A14ABE" --apply-to 1:3
+```
+
+2-6 colors get hand-tuned anchor layouts; more than 6 are distributed along the edges automatically. The base fill defaults to the palette average (override with `--base`).
+
+### Extract a gradient from an image
 
 Point figma-cli at any PNG or JPG and it samples the image to rebuild the gradient inside Figma. Two modes:
 

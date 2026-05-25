@@ -17,7 +17,7 @@ import * as apiDocs from './api-docs.js';
 import { isPatched, patchFigma, unpatchFigma, getFigmaCommand, getCdpPort, getFigmaBinaryPath } from './figma-patch.js';
 import { listComponents, getComponent, getAllComponents, VISUAL_COMPONENTS } from './shadcn.js';
 import { listBlocks, getBlock } from './blocks/index.js';
-import { extractGradient, extractMesh, buildFigmaPaint, buildCssString } from './gradient-extractor.js';
+import { extractGradient, extractMesh, buildMeshFromColors, buildFigmaPaint, buildCssString } from './gradient-extractor.js';
 import {
   nullDevice, killPort, getPortPid, sleepAfterStop,
   startFigmaApp, killFigmaApp,
@@ -3606,6 +3606,98 @@ gradient
         else console.error(chalk.red(`Apply failed: ${e.message}`));
         process.exit(1);
       }
+    }
+  });
+
+gradient
+  .command('mesh <colors>')
+  .description('Generate a mesh-gradient wallpaper from a color palette (no image needed)')
+  .option('--apply-to <frameId>', 'Populate an existing Frame instead of creating a new one')
+  .option('--base <hex>', 'Base fill behind the blobs (default: palette average)')
+  .option('--size <WxH>', 'Frame size for a new wallpaper', '1920x1080')
+  .option('--blur <frac>', 'Blur radius as fraction of min(W, H). Default 0.42.')
+  .option('--name <name>', 'Name for the created frame', 'Mesh Wallpaper')
+  .option('--json', 'Output JSON instead of human-readable')
+  .action(async (colorsArg, options) => {
+    const colors = colorsArg.split(',').map((c) => c.trim()).filter(Boolean);
+    let recipe;
+    try {
+      recipe = buildMeshFromColors(colors, {
+        base: options.base,
+        blur: options.blur != null ? Math.max(0.05, Math.min(0.8, parseFloat(options.blur))) : undefined,
+      });
+    } catch (e) {
+      console.error(chalk.red(e.message));
+      process.exit(1);
+    }
+
+    if (!options.json) {
+      console.log();
+      console.log(chalk.cyan('  Mesh wallpaper recipe'));
+      console.log(chalk.gray('  ─────────────────────────────────────────'));
+      console.log(chalk.white(`  Base:  `) + chalk.gray(recipe.base));
+      console.log(chalk.white(`  Blobs: `) + chalk.gray(`${recipe.blobs.length}, blur ${(recipe.blurFraction * 100).toFixed(0)}% of min side`));
+      recipe.blobs.forEach((b, i) => {
+        const pos = `(${b.fx.toFixed(2)}, ${b.fy.toFixed(2)})`;
+        console.log(chalk.gray(`    ${i + 1}.  ${pos.padEnd(18)} r=${b.r.toFixed(2)}  `) + chalk.white(b.color));
+      });
+    } else {
+      console.log(JSON.stringify(recipe, null, 2));
+    }
+
+    checkConnection();
+    let W = 1920, H = 1080;
+    const m = (options.size || '').match(/^(\d+)\s*[xX]\s*(\d+)$/);
+    if (m) { W = parseInt(m[1], 10); H = parseInt(m[2], 10); }
+
+    const code = `
+      (async () => {
+        await figma.loadAllPagesAsync();
+        const __hex = (h) => { h = h.replace('#', ''); return { r: parseInt(h.slice(0,2),16)/255, g: parseInt(h.slice(2,4),16)/255, b: parseInt(h.slice(4,6),16)/255 }; };
+        let __target;
+        ${options.applyTo ? `
+        __target = await figma.getNodeByIdAsync(${JSON.stringify(options.applyTo)});
+        if (!__target) throw new Error('Node not found: ' + ${JSON.stringify(options.applyTo)});
+        if (__target.type !== 'FRAME') throw new Error('Mesh requires a FRAME target; got ' + __target.type);
+        for (const c of [...__target.children]) c.remove();
+        ` : `
+        __target = figma.createFrame();
+        __target.name = ${JSON.stringify(options.name || 'Mesh Wallpaper')};
+        __target.resize(${W}, ${H});
+        let __x = 0;
+        figma.currentPage.children.forEach(n => { __x = Math.max(__x, n.x + (n.width || 0)); });
+        __target.x = __x + 100;
+        __target.y = 0;
+        `}
+        const W = __target.width, H = __target.height, D = Math.min(W, H);
+        __target.clipsContent = true;
+        __target.fills = [{ type:'SOLID', color: __hex(${JSON.stringify(recipe.base)}), opacity:1, visible:true, blendMode:'NORMAL' }];
+        const __blobs = ${JSON.stringify(recipe.blobs)};
+        const __blur = Math.round(D * ${recipe.blurFraction});
+        for (const b of __blobs) {
+          const e = figma.createEllipse();
+          const R = Math.round(D * b.r);
+          e.resize(R * 2, R * 2);
+          e.x = b.fx * W - R;
+          e.y = b.fy * H - R;
+          e.fills = [{ type:'SOLID', color: __hex(b.color), opacity:1, visible:true, blendMode:'NORMAL' }];
+          e.effects = [{ type:'LAYER_BLUR', radius: __blur, visible: true }];
+          __target.appendChild(e);
+        }
+        figma.viewport.scrollAndZoomIntoView([__target]);
+        return JSON.stringify({ id: __target.id, name: __target.name, blobs: __blobs.length, blur: __blur, w: W, h: H });
+      })()
+    `;
+    const spinner = options.json ? null : ora('Building wallpaper...').start();
+    try {
+      const res = await figmaEval(code);
+      const info = JSON.parse(res);
+      if (spinner) spinner.succeed(`${options.applyTo ? 'Built on' : 'Created'} ${info.name} (${info.w}x${info.h}, ${info.blobs} blobs)`);
+      else if (!options.json) console.log(chalk.green(`  ✓ ${info.name} (${info.id})`));
+    } catch (e) {
+      if (spinner) spinner.fail(`Build failed: ${e.message}`);
+      else console.error(chalk.red(`Build failed: ${e.message}`));
+      process.exit(1);
     }
   });
 

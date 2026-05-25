@@ -22,6 +22,7 @@ CLI that controls Figma Desktop directly. No API key needed.
 | "extract gradient from image" / "rebuild this gradient" | `figma-cli gradient extract <image>` |
 | "apply image gradient to a frame" | `figma-cli gradient extract <image> --apply-to <nodeId>` |
 | "match this mesh / blossom / aurora background" | `figma-cli gradient extract <image> --mode mesh --apply-to <frameId>` |
+| "create a wallpaper / mesh gradient from these colors" | `figma-cli gradient mesh "#a,#b,#c" --size 1920x1080` |
 | "show all variants" | `figma-cli combos` |
 | "create size variants" | `figma-cli sizes --base small` |
 | "make these frames a variant set" / "combine into variants" | `figma-cli variants from <ids> --property Size --values Small,Medium,Large --name Button` |
