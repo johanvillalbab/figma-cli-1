@@ -322,3 +322,185 @@ export function variantMatrixTable(props) {
   if (!rows.length) return '_no variant properties_';
   return ['| Property | Values |', '|---|---|', ...rows].join('\n');
 }
+
+// ============ Markdown writer ============
+
+export const ALL_SECTIONS = [
+  'identity', 'structure', 'color', 'typography', 'spacing',
+  'depth', 'components', 'states', 'rules', 'extending', 'tokens',
+];
+
+const SECTION_TITLES = {
+  identity: 'Identity', structure: 'Structure', color: 'Color',
+  typography: 'Typography', spacing: 'Spacing & Layout', depth: 'Depth & Motion',
+  components: 'Components', states: 'States', rules: 'Rules',
+  extending: 'Extending this system', tokens: 'Machine-readable tokens',
+};
+
+/**
+ * extraction = { fileName, date, pages: [walker page JSON] }
+ * options = { sections?: string[] }  (subset of ALL_SECTIONS, order ignored)
+ *
+ * Output layout matches the "Design to Markdown" plugin format so
+ * parseDesignMd() (Format B: json design-tokens block) reads it unchanged.
+ */
+export function generateDesignMd(extraction, options = {}) {
+  const sections = ALL_SECTIONS.filter(s => !options.sections || options.sections.includes(s));
+  const census = buildCensus(extraction.pages);
+  const colorNames = assignSemanticNames(census.colors);
+  const typeScale = buildTypeScale(census.typography);
+  const radiusNames = nameRadii(census.radii);
+  const baseUnit = inferBaseUnit(census.spacing);
+  const fonts = [...census.fonts];
+  const hexToName = Object.fromEntries(Object.entries(colorNames).map(([n, h]) => [h, n]));
+
+  const out = [];
+  out.push(`# DESIGN.md -- ${extraction.fileName}`, '');
+  out.push('<!-- extraction-meta');
+  out.push(`source: Figma file "${extraction.fileName}"`);
+  out.push(`scope: ${extraction.pages.length} page(s)`);
+  out.push(`date: ${extraction.date}`);
+  out.push(`nodes-scanned: ${extraction.pages.reduce((a, p) => a + (p.nodeCount || 0), 0)}`);
+  out.push(`generator: figma-cli extract`);
+  out.push('-->', '');
+
+  let num = 0;
+  const header = (key) => { num += 1; out.push(`## ${num}. ${SECTION_TITLES[key]}`, ''); };
+
+  for (const key of sections) {
+    if (key === 'identity') {
+      header(key);
+      out.push(`**In one line:** A design system using ${fonts.join(', ') || 'system fonts'} with ${census.colors.size} unique colors extracted directly from Figma.`, '');
+      out.push('**Signature Techniques:**');
+      out.push('- Consistent auto-layout spacing system');
+      out.push(`- Component library with ${census.componentSets.reduce((a, c) => a + c.variants, 0)} variants across ${census.componentSets.length} component sets`);
+      out.push('');
+    }
+    if (key === 'structure') {
+      header(key);
+      out.push('High-level composition. Each entry: frame name, type, dimensions, auto-layout.', '');
+      for (const page of extraction.pages) {
+        out.push(`### Page: ${page.name}`, '');
+        if (page.error) { out.push(`<!-- page "${page.name}" skipped: ${page.error} -->`, ''); continue; }
+        out.push(`_${page.frames.length} top-level frame(s)_`, '');
+        for (const frame of page.frames) out.push(...formatTree(frame, 0));
+        out.push('');
+      }
+    }
+    if (key === 'color') {
+      header(key);
+      out.push('### Palette', '');
+      out.push('| Token | Hex | Usage count |', '|---|---|---|');
+      const ranked = [...census.colors.entries()].sort((a, b) => b[1] - a[1]);
+      for (const [hex, count] of ranked) out.push(`| ${hexToName[hex]} | \`${hex}\` | ${count} |`);
+      out.push('');
+    }
+    if (key === 'typography') {
+      header(key);
+      out.push('### Fonts', '');
+      for (const f of fonts) out.push(`- ${f}`);
+      out.push('', '### Scale', '');
+      out.push('| Token | Family | Size | Weight | Line height |', '|---|---|---|---|---|');
+      for (const [name, t] of Object.entries(typeScale)) {
+        out.push(`| ${name} | ${t.fontFamily} | ${t.fontSize}px | ${t.fontWeight} | ${t.lineHeight != null ? t.lineHeight + 'px' : 'auto'} |`);
+      }
+      out.push('');
+    }
+    if (key === 'spacing') {
+      header(key);
+      out.push('### Base Unit', '', `${baseUnit}px`, '');
+      out.push('### Border Radius', '');
+      out.push('| Token | Value |', '|---|---|');
+      for (const [name, v] of Object.entries(radiusNames)) out.push(`| ${name} | ${v}px |`);
+      out.push('');
+    }
+    if (key === 'depth') {
+      header(key);
+      out.push('### Elevation', '');
+      const shadows = [...census.shadows.entries()].sort((a, b) => b[1] - a[1]);
+      if (!shadows.length) out.push('_no shadow effects found_');
+      for (const [json, count] of shadows) {
+        const e = JSON.parse(json);
+        if (e.type === 'DROP_SHADOW' || e.type === 'INNER_SHADOW') {
+          out.push(`- ${e.type === 'INNER_SHADOW' ? 'inset ' : ''}${e.x}px ${e.y}px ${e.blur}px ${e.spread}px ${e.color} @ ${Math.round(e.a * 100)}% (used ${count}×)`);
+        } else {
+          out.push(`- ${e.type} blur ${e.blur}px (used ${count}×)`);
+        }
+      }
+      out.push('');
+    }
+    if (key === 'components') {
+      header(key);
+      if (!census.componentSets.length) out.push('_no component sets found_', '');
+      for (const cs of census.componentSets) {
+        out.push(`### ${cs.name}`, '');
+        out.push(`Page: ${cs.page} · ${cs.variants} variants`, '');
+        out.push(variantMatrixTable(cs.props), '');
+        if (cs.sample) {
+          out.push('Sample variant structure:', '');
+          out.push(...formatTree(cs.sample, 0), '');
+        }
+      }
+    }
+    if (key === 'states') {
+      header(key);
+      out.push('State tokens should be derived from the base palette above. Recommended mappings:', '');
+      out.push('| State | Treatment |', '|-------|-----------|');
+      out.push('| Hover | Lighten/darken accent by 10% |');
+      out.push('| Focus | 2px ring using accent color with 30% opacity |');
+      out.push('| Disabled | 40% opacity, no pointer events |');
+      out.push('| Error | Use danger color for border and text |', '');
+    }
+    if (key === 'rules') {
+      header(key);
+      out.push('### Do', '');
+      out.push(`- Use the ${baseUnit}px base unit for all spacing decisions`);
+      const accent = colorNames['accent'];
+      if (accent) out.push(`- Use \`${accent}\` (accent) as the primary accent color`);
+      out.push('- Bind colors to the tokens below instead of hardcoding hex values', '');
+      out.push("### Don't", '');
+      out.push('- Introduce new colors without adding them to the palette');
+      out.push('- Mix corner radii outside the radius scale', '');
+    }
+    if (key === 'extending') {
+      header(key);
+      out.push('### How to reuse this DESIGN.md', '');
+      out.push('Import into Figma with `figma-cli import <this file>` — colors, radii and typography become variables.', '');
+      out.push('### When to add a new token vs reuse', '');
+      out.push('Reuse the closest existing token; add a new one only when a new semantic role appears.', '');
+    }
+    if (key === 'tokens') {
+      header(key);
+      out.push('The block below is the canonical token map. It mirrors the tables above but is unambiguous and parseable.', '');
+      const tokens = {
+        $schema: 'design-tokens.v1',
+        meta: { source: extraction.fileName, generated: extraction.date },
+        color: colorNames,
+        typography: typeScale,
+        spacing: { 'base-unit': baseUnit },
+        radius: Object.fromEntries(Object.entries(radiusNames).map(([n, v]) => [n, `${v}px`])),
+        shadow: {},
+        fonts,
+      };
+      let i = 0;
+      for (const [json] of [...census.shadows.entries()].sort((a, b) => b[1] - a[1])) {
+        const e = JSON.parse(json);
+        if (e.type !== 'DROP_SHADOW' && e.type !== 'INNER_SHADOW') continue;
+        i += 1;
+        tokens.shadow[`shadow-${i}`] = `${e.type === 'INNER_SHADOW' ? 'inset ' : ''}${e.x}px ${e.y}px ${e.blur}px ${e.spread}px ${e.color}${e.a < 1 ? Math.round(e.a * 255).toString(16).padStart(2, '0') : ''}`;
+      }
+      out.push('```json design-tokens');
+      out.push(JSON.stringify(tokens, null, 2));
+      out.push('```', '');
+    }
+  }
+  return out.join('\n');
+}
+
+/** Full uncompressed tree for one page (used by --split). */
+export function generatePageStructureMd(page) {
+  const out = [`# Structure: ${page.name}`, ''];
+  if (page.error) { out.push(`_page skipped: ${page.error}_`); return out.join('\n'); }
+  for (const frame of page.frames) out.push(...formatTree(frame, 0));
+  return out.join('\n');
+}

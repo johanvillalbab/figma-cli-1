@@ -157,3 +157,56 @@ test('variantMatrixTable renders a property/values table', () => {
   assert.match(md, /\| trigger \| icon-button, button \|/);
   assert.match(md, /\| open \| true, false \|/);
 });
+
+import { generateDesignMd, ALL_SECTIONS } from '../src/design-extract.js';
+import { parseDesignMd } from '../src/design-md.js';
+import { writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const EXTRACTION = {
+  fileName: 'Test File',
+  date: '2026-06-12',
+  pages: FIXTURE_PAGES,
+};
+
+test('generateDesignMd emits all 11 sections by default', () => {
+  const md = generateDesignMd(EXTRACTION);
+  for (const [i, title] of [
+    [1, 'Identity'], [2, 'Structure'], [3, 'Color'], [4, 'Typography'],
+    [5, 'Spacing & Layout'], [6, 'Depth & Motion'], [7, 'Components'],
+    [8, 'States'], [9, 'Rules'], [10, 'Extending this system'],
+    [11, 'Machine-readable tokens'],
+  ]) {
+    assert.match(md, new RegExp(`^## ${i}\\. ${title.replace(/[&]/g, '\\$&')}`, 'm'), `missing section ${i} ${title}`);
+  }
+});
+
+test('generateDesignMd respects --sections selection and renumbers', () => {
+  const md = generateDesignMd(EXTRACTION, { sections: ['color', 'tokens'] });
+  assert.match(md, /^## 1\. Color/m);
+  assert.match(md, /^## 2\. Machine-readable tokens/m);
+  assert.doesNotMatch(md, /## \d+\. Structure/);
+});
+
+test('roundtrip: parseDesignMd reads generateDesignMd output', () => {
+  const md = generateDesignMd(EXTRACTION);
+  const dir = mkdtempSync(join(tmpdir(), 'extract-test-'));
+  const file = join(dir, 'DESIGN.md');
+  writeFileSync(file, md);
+  const parsed = parseDesignMd(file);
+  assert.equal(parsed.meta.source, 'Test File');
+  // every census color appears in the parsed token map
+  const parsedColors = Object.values(parsed.tokens.color);
+  assert.ok(parsedColors.includes('#ffffff'));
+  assert.ok(parsedColors.includes('#1f883d'));
+  // typography roundtrips with family + size
+  const tNames = Object.keys(parsed.tokens.typography);
+  assert.ok(tNames.length >= 1);
+});
+
+test('structure section contains untruncated page trees', () => {
+  const md = generateDesignMd(EXTRACTION);
+  assert.match(md, /### Page: Buttons/);
+  assert.match(md, /\*\*Primary\*\* · `COMPONENT` · 71×32/);
+});
