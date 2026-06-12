@@ -89,3 +89,90 @@ export function walkerCode(pageId, { maxDepth = 8, textLimit = 80 } = {}) {
     return JSON.stringify({ id: page.id, name: page.name, nodeCount: visited, frames: page.children.map(c => walk(c, 0)) });
   })()`;
 }
+
+// ============ Aggregator (pure, Node-side) ============
+
+const bump = (map, key, by = 1) => map.set(key, (map.get(key) || 0) + by);
+
+/** Hex '#rrggbb' → { h, s, l } each 0..1 (h 0..360). */
+export function hexToHsl(hexStr) {
+  const v = hexStr.replace('#', '');
+  const r = parseInt(v.slice(0, 2), 16) / 255;
+  const g = parseInt(v.slice(2, 4), 16) / 255;
+  const b = parseInt(v.slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  if (max === min) return { h: 0, s: 0, l };
+  const d = max - min;
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  let h;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+  else if (max === g) h = ((b - r) / d + 2) * 60;
+  else h = ((r - g) / d + 4) * 60;
+  return { h, s, l };
+}
+
+/**
+ * Walk all page trees and count every design decision.
+ * Returns { colors, typography, radii, spacing, shadows: Map, fonts: Set,
+ *           componentSets: [{name, page, props, variants, sample}] }.
+ * Color keys are bare hex (opacity suffix stripped); typography keys are
+ * 'family|style|size|lh|ls'.
+ */
+export function buildCensus(pages) {
+  const census = {
+    colors: new Map(), typography: new Map(), radii: new Map(),
+    spacing: new Map(), shadows: new Map(), fonts: new Set(), componentSets: [],
+  };
+  const visitPaints = (arr) => (arr || []).forEach(p => {
+    if (typeof p === 'string' && p.startsWith('#')) bump(census.colors, p.split('@')[0]);
+  });
+  const visit = (n, pageName) => {
+    visitPaints(n.fills);
+    visitPaints(n.strokes);
+    if (n.gap > 0) bump(census.spacing, n.gap);
+    (n.pad || []).forEach(v => { if (v > 0) bump(census.spacing, v); });
+    if (n.r != null) (Array.isArray(n.r) ? n.r : [n.r]).forEach(v => { if (v > 0) bump(census.radii, v); });
+    (n.fx || []).forEach(e => bump(census.shadows, JSON.stringify(e)));
+    if (n.txt && n.txt.font) {
+      census.fonts.add(n.txt.font);
+      bump(census.typography, [n.txt.font, n.txt.style || '', n.txt.size ?? '', n.txt.lh ?? '', n.txt.ls ?? ''].join('|'));
+    }
+    if (n.t === 'COMPONENT_SET') {
+      census.componentSets.push({ name: n.n, page: pageName, props: n.vp || {}, variants: n.kidCount || 0, sample: n.kids?.[0] });
+    }
+    (n.kids || []).forEach(k => visit(k, pageName));
+  };
+  for (const page of pages) (page.frames || []).forEach(f => visit(f, page.name));
+  return census;
+}
+
+/**
+ * Rank colors by usage and assign the semantic names the plugin format uses
+ * (background, surface, text-primary, text-secondary, text-tertiary, border,
+ * accent — with -alt / -3 / -4 suffixes for repeats within a role).
+ * Input: Map<hex, count>. Output: { name: hex } ordered by usage.
+ */
+export function assignSemanticNames(colors) {
+  const roleOf = (hex) => {
+    const { s, l } = hexToHsl(hex);
+    if (s > 0.25 && l > 0.08 && l < 0.95) return 'accent';
+    if (l >= 0.97) return 'background';
+    if (l >= 0.85) return 'surface';
+    if (l >= 0.6) return 'border';
+    if (l >= 0.45) return 'text-tertiary';
+    if (l >= 0.25) return 'text-secondary';
+    return 'text-primary';
+  };
+  const ranked = [...colors.entries()].sort((a, b) => b[1] - a[1]);
+  const used = new Map(); // role → count so far
+  const out = {};
+  for (const [hex] of ranked) {
+    const role = roleOf(hex);
+    const nth = (used.get(role) || 0) + 1;
+    used.set(role, nth);
+    const name = nth === 1 ? role : nth === 2 ? `${role}-alt` : `${role}-${nth}`;
+    out[name] = hex;
+  }
+  return out;
+}
