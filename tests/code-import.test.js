@@ -121,3 +121,39 @@ test('storybook: v6 stories.json shape also parses', () => {
   const { meta } = parseStorybookIndex(v6);
   assert.equal(meta.components[0].name, 'Button');
 });
+
+import { convert, detectSourceType } from '../src/code-import/index.js';
+import { parseDesignMd } from '../src/design-md.js';
+import { writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+test('detect: filenames and content sniffing', () => {
+  assert.equal(detectSourceType('tailwind.config.js', ''), 'tailwind');
+  assert.equal(detectSourceType('a/b/tailwind.config.ts', ''), 'tailwind');
+  assert.equal(detectSourceType('globals.css', ''), 'css');
+  assert.equal(detectSourceType('tokens.json', '{"color":{"a":{"$value":"#fff"}}}'), 'tokens');
+  assert.equal(detectSourceType('index.json', '{"v":5,"entries":{}}'), 'storybook');
+  assert.equal(detectSourceType('http://localhost:6006', ''), 'storybook');
+});
+
+test('convert: every converter designMd output roundtrips through parseDesignMd', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'code-import-'));
+  for (const [src, type] of [
+    [join(FIX, 'tokens-style-dictionary.json'), 'tokens'],
+    [join(FIX, 'shadcn-globals.css'), 'css'],
+    [join(FIX, 'tailwind.config.cjs'), 'tailwind'],
+  ]) {
+    const result = await convert(src, { type });
+    const f = join(dir, `out-${type}.md`);
+    writeFileSync(f, result.designMd);
+    const parsed = parseDesignMd(f);
+    assert.ok(Object.keys(parsed.tokens.color).length > 0, `${type}: colors survive roundtrip`);
+  }
+});
+
+test('convert: storybook produces components in designMd and zero tokens', async () => {
+  const result = await convert(join(FIX, 'storybook-index.json'), { type: 'storybook' });
+  assert.match(result.designMd, /### Button/);
+  assert.match(result.designMd, /Primary, Secondary/);
+  assert.equal(Object.keys(result.tokens.color).length, 0);
+});
