@@ -1172,7 +1172,10 @@ export class FigmaClient {
           // Explicit justify=/items= always win. This fixes the recurring
           // "title/cell content is centered / avatars are staggered" papercut.
           const isColFrame = fFlex === 'col' || fFlex === 'column';
-          const fAlign = item.align || (isColFrame ? 'start' : 'center');
+          // Read `items` too (not just `align`) — the root paths accept both,
+          // nested previously ignored `items` (it only worked by coincidence
+          // when the default matched).
+          const fAlign = item.items || item.align || (isColFrame ? 'start' : 'center');
           const fJustify = item.justify || 'start';
           // Clip defaults to false for nested frames (overflow="hidden" also sets clip)
           const fClip = item.clip === 'true' || item.clip === true || item.overflow === 'hidden';
