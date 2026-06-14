@@ -1181,12 +1181,37 @@ export class FigmaClient {
           const frameStrokeCode = fStroke ? this.generateStrokeCode(fStroke, `el${idx}`, fStrokeWidth, fStrokeAlign) : { code: '' };
           const frameEffectsCode = this.generateEffectsCode(item, `el${idx}`);
 
+          // `stretch={true}` fills the CROSS axis of the parent (vertical when
+          // the parent is a row, horizontal when it's a col). This was a known
+          // prop that previously did nothing — a silent footgun where dividers
+          // never filled their parent's height.
+          const isStretch = item.stretch === true || item.stretch === 'true';
+          const crossIsV = parentFlex === 'row';   // cross axis of a row = vertical
+          const crossIsH = parentFlex === 'col';   // cross axis of a col = horizontal
+
+          // Thin-divider auto-fill guard: a 1–2px-thin child (a divider/rule)
+          // whose long (cross) axis is left UNSET would otherwise default to a
+          // 100px frame and inflate the whole parent ("looks zu hoch"). When the
+          // short axis is a small fixed number and the cross axis is unspecified,
+          // auto-fill the cross axis so the rule spans the parent instead.
+          const thinW = hasWidth && Number(numericW) <= 2 && !hasHeight && !fillHeight && !hugHeight;
+          const thinH = hasHeight && Number(numericH) <= 2 && !hasWidth && !fillWidth && !hugWidth;
+          const autoFillV = thinW && crossIsV;
+          const autoFillH = thinH && crossIsH;
+
           // Determine sizing: FILL, FIXED, or HUG for each axis. An explicit
           // `hug` keyword forces HUG regardless of whether a number was given.
-          const wantFillH = fillWidth || (fGrow !== null && parentFlex === 'row');
-          const wantFillV = fillHeight || (fGrow !== null && parentFlex === 'col');
+          const wantFillH = fillWidth || (fGrow !== null && parentFlex === 'row') || (isStretch && crossIsH) || autoFillH;
+          const wantFillV = fillHeight || (fGrow !== null && parentFlex === 'col') || (isStretch && crossIsV) || autoFillV;
           const hSizing = wantFillH ? 'FILL' : hugWidth ? 'HUG' : (hasWidth ? 'FIXED' : 'HUG');
           const vSizing = wantFillV ? 'FILL' : hugHeight ? 'HUG' : (hasHeight ? 'FIXED' : 'HUG');
+
+          // Initial resize: for an axis that will FILL, seed it at 1px (not the
+          // 100px default) so the parent hugs to its REAL content before FILL is
+          // applied. Otherwise a divider's 100px default determines the hug and
+          // FILL can't shrink it back (the "zu hoch" footgun).
+          const resizeW = hasWidth ? fWidth : (wantFillH ? 1 : 100);
+          const resizeH = hasHeight ? fHeight : (wantFillV ? 1 : 100);
 
           return `
         __currentNode = 'Frame: ${fName.replace(/'/g, "\\'")}';
@@ -1194,7 +1219,7 @@ export class FigmaClient {
         el${idx}.name = ${JSON.stringify(fName)};
         el${idx}.layoutMode = '${fFlex === 'row' ? 'HORIZONTAL' : 'VERTICAL'}';
         ${fWrap && fFlex === 'row' ? `el${idx}.layoutWrap = 'WRAP';` : ''}
-        ${hasWidth || hasHeight ? `el${idx}.resize(${hasWidth ? fWidth : 100}, ${hasHeight ? fHeight : 100});` : ''}
+        ${hasWidth || hasHeight || wantFillH || wantFillV ? `el${idx}.resize(${resizeW}, ${resizeH});` : ''}
         el${idx}.itemSpacing = ${fGap};
         el${idx}.paddingTop = ${fPt};
         el${idx}.paddingBottom = ${fPb};

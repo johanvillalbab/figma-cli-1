@@ -146,10 +146,12 @@ program
   .option('-s, --scale <number>', 'Export scale (default: 0.5 for small size)', '0.5')
   .option('--max <pixels>', 'Max dimension in pixels (default: 2000)', '2000')
   .option('--save [path]', 'Save as PNG file (default: /tmp/figma-verify-{id}.png)')
+  .option('--measure', 'Also return real (unscaled) node + child dimensions so size bugs are caught by measurement, not just the screenshot')
   .action((nodeId, options) => {
     checkConnection();
     const scale = parseFloat(options.scale);
     const maxDim = parseInt(options.max);
+    const withMeasure = !!options.measure;
 
     const code = `(async () => {
       let node;
@@ -181,13 +183,33 @@ program
       // Convert to base64
       const base64 = figma.base64Encode(bytes);
 
+      // Optional measurement tree: real (unscaled) dimensions of the node and
+      // its children, so size regressions ("too tall") are caught by numbers.
+      let measure = null;
+      if (${withMeasure}) {
+        const walk = (n, depth) => {
+          const m = {
+            name: n.name, type: n.type,
+            w: Math.round(n.width), h: Math.round(n.height),
+            layout: n.layoutMode && n.layoutMode !== 'NONE' ? n.layoutMode : undefined,
+            sizeH: n.layoutSizingHorizontal, sizeV: n.layoutSizingVertical
+          };
+          if (depth > 0 && 'children' in n && n.children.length) {
+            m.children = n.children.slice(0, 24).map(c => walk(c, depth - 1));
+          }
+          return m;
+        };
+        measure = walk(node, 3);
+      }
+
       return {
         name: node.name,
         id: node.id,
         width: Math.round(nodeWidth * finalScale),
         height: Math.round(nodeHeight * finalScale),
         scale: finalScale,
-        base64: base64
+        base64: base64,
+        measure: measure
       };
     })()`;
 
@@ -212,7 +234,8 @@ program
         id: result.id,
         width: result.width,
         height: result.height,
-        saved: savePath
+        saved: savePath,
+        ...(result.measure ? { measure: result.measure } : {})
       }));
     } else {
       // Output as JSON for easy parsing
@@ -221,7 +244,8 @@ program
         id: result.id,
         width: result.width,
         height: result.height,
-        base64: result.base64
+        base64: result.base64,
+        ...(result.measure ? { measure: result.measure } : {})
       }));
     }
   });

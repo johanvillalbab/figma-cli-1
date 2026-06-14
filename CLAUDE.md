@@ -151,9 +151,15 @@ After creating any component, run `verify` to get a small screenshot for validat
 ```bash
 figma-cli verify              # Screenshot of selection
 figma-cli verify "123:456"    # Screenshot of specific node
+figma-cli verify "123:456" --measure   # + real w/h of the node and its children
 ```
 
 Returns JSON with base64 image (max 2000px). This is for internal AI checks, not shown to users.
+
+**`--measure`** adds a `measure` tree (real unscaled w/h, layout mode, FILL/HUG/FIXED
+sizing for the node + up to 3 levels of children). Use it to catch size bugs by
+NUMBERS, not by eyeballing the screenshot: a divider/row that reads as 100px tall
+when it should be ~32px is obvious in `measure`, invisible at a glance.
 
 ---
 
