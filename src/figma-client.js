@@ -1165,8 +1165,15 @@ export class FigmaClient {
           const fPr = item.pr !== undefined ? Number(item.pr) : Number(fPx);
           const fPb = item.pb !== undefined ? Number(item.pb) : Number(fPy);
           const fPl = item.pl !== undefined ? Number(item.pl) : Number(fPx);
-          const fAlign = item.align || 'center';
-          const fJustify = item.justify || 'center';
+          // Sensible alignment defaults (match the root-frame paths, which
+          // already default to start): content reads top-left, not centered.
+          // EXCEPTION: a row's cross axis stays centered, because vertically
+          // centering icon+text in a row/cell is almost always what's wanted.
+          // Explicit justify=/items= always win. This fixes the recurring
+          // "title/cell content is centered / avatars are staggered" papercut.
+          const isColFrame = fFlex === 'col' || fFlex === 'column';
+          const fAlign = item.align || (isColFrame ? 'start' : 'center');
+          const fJustify = item.justify || 'start';
           // Clip defaults to false for nested frames (overflow="hidden" also sets clip)
           const fClip = item.clip === 'true' || item.clip === true || item.overflow === 'hidden';
 
