@@ -5,6 +5,7 @@
   <img src="https://img.shields.io/badge/Figma-Desktop-purple" alt="Figma Desktop">
   <img src="https://img.shields.io/badge/No_API_Key-Required-green" alt="No API Key">
   <img src="https://img.shields.io/badge/Talk_to-Claude-blue" alt="Talk to Claude">
+  <a href="#using-cursor"><img src="https://img.shields.io/badge/Works_in-Cursor-000000?logo=cursor&logoColor=white" alt="Works in Cursor"></a>
 </p>
 
 <p align="center">
