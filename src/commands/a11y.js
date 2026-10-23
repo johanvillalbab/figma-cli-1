@@ -432,7 +432,7 @@ a11y
 
 a11y
   .command('text [nodeId]')
-  .description('Check text accessibility (min sizes, line height, paragraph spacing)')
+  .description('Inspect text metrics and readability hints')
   .option('--json', 'Output as JSON')
   .action(async (nodeId, options) => {
     await checkConnection();
@@ -461,30 +461,11 @@ a11y
 
           const issues = [];
 
-          // WCAG 1.4.4: text should be readable
+          // Readability guidance; WCAG 1.4.4 tests resizing, not a fixed size.
           if (fontSize && fontSize < 12) {
             issues.push({ rule: 'min-size', message: 'Font size < 12px (hard to read)', severity: 'error' });
           } else if (fontSize && fontSize < 14) {
             issues.push({ rule: 'min-size', message: 'Font size < 14px (consider increasing for body text)', severity: 'warning' });
-          }
-
-          // WCAG 1.4.12: line height >= 1.5x for body text
-          if (fontSize && fontSize <= 18 && lineHeightRatio && lineHeightRatio < 1.5) {
-            issues.push({ rule: 'line-height', message: 'Line height < 1.5x for body text (WCAG 1.4.12)', severity: 'warning' });
-          }
-
-          // WCAG 1.4.12: paragraph spacing >= 2x font size
-          if (node.paragraphSpacing !== undefined && fontSize) {
-            if (node.paragraphSpacing > 0 && node.paragraphSpacing < fontSize * 2) {
-              issues.push({ rule: 'paragraph-spacing', message: 'Paragraph spacing < 2x font size (WCAG 1.4.12)', severity: 'warning' });
-            }
-          }
-
-          // WCAG 1.4.12: letter spacing >= 0.12x font size
-          if (node.letterSpacing && node.letterSpacing.unit === 'PIXELS' && fontSize) {
-            if (node.letterSpacing.value < fontSize * 0.12 && node.letterSpacing.value !== 0) {
-              issues.push({ rule: 'letter-spacing', message: 'Letter spacing < 0.12x font size (WCAG 1.4.12)', severity: 'warning' });
-            }
           }
 
           // Check for ALL CAPS on long text (readability concern)
@@ -756,16 +737,6 @@ a11y
           const fontSize = typeof node.fontSize === 'number' ? node.fontSize : null;
           if (fontSize && fontSize < 12) {
             issues.push({ category: 'text', severity: 'error', id: node.id, name: node.name, message: 'Font size ' + fontSize + 'px < 12px minimum' });
-          }
-
-          // Line height
-          if (fontSize && fontSize <= 18 && node.lineHeight) {
-            let ratio = null;
-            if (node.lineHeight.unit === 'PIXELS') ratio = node.lineHeight.value / fontSize;
-            else if (node.lineHeight.unit === 'PERCENT') ratio = node.lineHeight.value / 100;
-            if (ratio && ratio < 1.5) {
-              issues.push({ category: 'text', severity: 'warning', id: node.id, name: node.name, message: 'Line height ' + (ratio).toFixed(2) + 'x < 1.5x (WCAG 1.4.12)' });
-            }
           }
 
           // ALL CAPS

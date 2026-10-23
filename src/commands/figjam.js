@@ -9,7 +9,7 @@ import {
   program,
   checkConnection,
   fastEval,
-  isInSafeMode,
+  shouldUseNativeEval,
   runFigmaUse
 } from '../lib/cli-core.js';
 
@@ -23,7 +23,7 @@ program
   .action(async (nodeId, options) => {
     await checkConnection();
 
-    if (await isInSafeMode()) {
+    if (await shouldUseNativeEval()) {
       const code = `(async () => {
         const targetId = ${nodeId ? `"${nodeId}"` : 'null'};
         const nodes = targetId
@@ -120,8 +120,9 @@ program
   .action(async (nodeId, options) => {
     await checkConnection();
 
-    if (await isInSafeMode()) {
+    if (await shouldUseNativeEval()) {
       const code = `(async () => {
+        const targetId = ${JSON.stringify(nodeId || null)};
         const components = [];
         function findComponents(node) {
           if (node.type === 'COMPONENT' || node.type === 'COMPONENT_SET') {
@@ -135,7 +136,11 @@ program
           }
           if ('children' in node) node.children.forEach(c => findComponents(c));
         }
-        figma.currentPage.children.forEach(c => findComponents(c));
+        if (targetId) {
+          const root = await figma.getNodeByIdAsync(targetId);
+          if (!root) throw new Error('Node not found: ' + targetId);
+          findComponents(root);
+        } else figma.currentPage.children.forEach(c => findComponents(c));
         return components;
       })()`;
 

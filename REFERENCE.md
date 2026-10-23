@@ -194,6 +194,10 @@ node src/index.js export node "1:234" -f svg -o card.svg  # SVG export
 node src/index.js export-jsx "1:234"           # Export as JSX
 node src/index.js export-jsx "1:234" -o Card.jsx --pretty
 node src/index.js export-storybook "1:234"     # Storybook stories
+node src/index.js export dtcg tokens.json      # All variable modes and aliases
+node src/index.js export dtcg tokens.json --dry-run
+node src/index.js tokens sync-import tokens.json --dry-run
+node src/index.js tokens sync-import tokens.json
 ```
 
 ## Analysis & Linting
@@ -207,6 +211,8 @@ node src/index.js analyze colors               # Color usage
 node src/index.js analyze typography           # Typography
 node src/index.js analyze spacing              # Spacing
 node src/index.js analyze clusters             # Find patterns
+node src/index.js design-health --json          # Full-file design system report
+node src/index.js design-health --tokens tokens.json --json # Token parity
 ```
 
 Lint rules: `no-default-names`, `no-deeply-nested`, `no-empty-frames`, `prefer-auto-layout`, `no-hardcoded-colors`, `color-contrast`, `touch-target-size`, `min-text-size`
@@ -270,7 +276,7 @@ node src/index.js daemon reconnect         # Reconnect to Figma
 node src/index.js files                    # List open Figma files (JSON)
 ```
 
-### Multiple Figma tabs (CDP mode)
+### Multiple Figma files
 
 ```bash
 node src/index.js tabs                     # List open design tabs and their IDs
@@ -278,13 +284,17 @@ node src/index.js tab <tab-id>              # Target this tab for subsequent com
 node src/index.js tab auto                  # Return to the default tab
 node src/index.js eval --tab <tab-id> "return figma.currentPage.name"
 node src/index.js eval --all-tabs "return figma.currentPage.name"
+node src/index.js events --json                # Recent events by file
+node src/index.js events --tab <tab-id> --limit 20
+node src/index.js events --follow                # Stream new events
 ```
 
 `eval --all-tabs` runs the same code in each open design tab concurrently and
 returns a result or error for each tab. The code can change a document, so use
 read-only expressions for inspection. Tab selection lasts for the current daemon
-session. These commands require CDP mode (`connect` without `--safe`); Safe Mode
-still has one plugin connection.
+session. CDP tabs and Safe Mode plugin connections appear in `tabs`; each Safe Mode
+file needs its own running bridge plugin. `events` retains the latest 200 console,
+selection and document events per connected file in the daemon session.
 
 ### Troubleshooting Auth Errors
 

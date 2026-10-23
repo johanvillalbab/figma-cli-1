@@ -11,6 +11,7 @@ import {
   isDaemonRunning,
   unescapeShell
 } from '../lib/cli-core.js';
+import { exportDtcg } from '../token-sync-service.js';
 
 // ============ EXPORT ============
 
@@ -140,45 +141,18 @@ return JSON.stringify({ theme: { extend: { colors } } }, null, 2);
 
 exp
   .command('dtcg [output]')
-  .description('Export variables as W3C Design Tokens (DTCG) JSON — the export side of token sync (import side: figma-cli import tokens.json)')
-  .action((output) => {
-    checkConnection();
-    const code = `(async () => {
-const vars = await figma.variables.getLocalVariablesAsync();
-const byId = {};
-for (const v of vars) byId[v.id] = v.name;
-const dot = n => n.replace(/\\//g, '.');
-const h2 = n => Math.round(n*255).toString(16).padStart(2,'0');
-const toColor = c => { const b = '#'+h2(c.r)+h2(c.g)+h2(c.b); return (c.a != null && c.a < 1) ? b+h2(c.a) : b; };
-const tree = {};
-const setPath = (path, token) => { const p = path.split('/'); let cur = tree; for (let i=0;i<p.length-1;i++){ if (!cur[p[i]] || cur[p[i]].$value !== undefined) cur[p[i]] = {}; cur = cur[p[i]]; } cur[p[p.length-1]] = token; };
-for (const v of vars) {
-  const val = Object.values(v.valuesByMode)[0];
-  const dtype = v.resolvedType === 'COLOR' ? 'color' : v.resolvedType === 'FLOAT' ? 'dimension' : v.resolvedType === 'BOOLEAN' ? 'boolean' : 'string';
-  let token;
-  if (val && val.type === 'VARIABLE_ALIAS') {
-    const ref = byId[val.id];
-    token = { $type: dtype, $value: ref ? '{'+dot(ref)+'}' : null };
-  } else if (v.resolvedType === 'COLOR') {
-    token = { $type: 'color', $value: toColor(val) };
-  } else if (v.resolvedType === 'FLOAT') {
-    token = { $type: 'dimension', $value: val + 'px' };
-  } else if (v.resolvedType === 'BOOLEAN') {
-    token = { $type: 'boolean', $value: val };
-  } else {
-    token = { $type: 'string', $value: String(val) };
-  }
-  if (v.description) token.$description = v.description;
-  setPath(v.name, token);
-}
-return JSON.stringify(tree, null, 2);
-})()`;
-    const result = figmaUse(`eval "${code.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`, { silent: true });
-    if (output) {
-      writeFileSync(output, result.endsWith('\n') ? result : result + '\n');
-      console.log(chalk.green('✓ Wrote DTCG tokens →'), output);
-    } else {
-      console.log(result);
+  .description('Export all variable modes as DTCG JSON with Figma identity metadata')
+  .option('--dry-run', 'Preview without writing')
+  .option('--replace', 'Allow overwriting foreign or extra tokens')
+  .action(async (output, options) => {
+    try {
+      await checkConnection();
+      const result = await exportDtcg(output, options);
+      if (!output) console.log(result.text);
+      else console.log(`${options.dryRun ? 'Would write' : 'Wrote'} ${result.count} tokens → ${output}`);
+    } catch (error) {
+      console.error(chalk.red('✗ ' + error.message));
+      process.exitCode = 1;
     }
   });
 
@@ -301,14 +275,14 @@ program
   .description('Execute JavaScript in Figma plugin context')
   .option('-f, --file <path>', 'Run code from file instead of argument')
   .option('--tab <id>', 'Target one open Figma tab by ID (see figma-cli tabs)')
-  .option('--all-tabs', 'Run the code concurrently in every open Figma design tab')
+  .option('--all-tabs', 'Run the code concurrently in every connected Figma design file')
   .action(async (code, options) => {
     if (options.tab && options.allTabs) {
       console.error(chalk.red('✗ Use either --tab or --all-tabs.'));
       process.exitCode = 1;
       return;
     }
-    checkConnection();
+    await checkConnection();
     let jsCode = code ? unescapeShell(code) : code;
 
     // If --file option provided, read code from file

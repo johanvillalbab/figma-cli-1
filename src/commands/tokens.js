@@ -13,6 +13,7 @@ import {
   handleEvalError,
   hexToRgb
 } from '../lib/cli-core.js';
+import { importDtcg } from '../token-sync-service.js';
 
 // ============ COLLECTIONS ============
 
@@ -42,6 +43,23 @@ collections
 const tokens = program
   .command('tokens')
   .description('Create design token presets');
+
+tokens
+  .command('sync-import <file>')
+  .description('Merge a figma-cli DTCG export into the active Figma file, including modes and aliases')
+  .option('--dry-run', 'Preview changes without writing to Figma')
+  .action(async (file, options) => {
+    try {
+      await checkConnection();
+      const result = await importDtcg(file, options);
+      console.log(JSON.stringify({ source: result.source, create: result.create, update: result.update,
+        unchanged: result.unchanged, preserve: result.preserve, applied: result.applied, errors: result.errors || [] }, null, 2));
+      if (result.errors?.length) process.exitCode = 1;
+    } catch (error) {
+      console.error(chalk.red('✗ ' + error.message));
+      process.exitCode = 1;
+    }
+  });
 
 tokens
   .command('tailwind')

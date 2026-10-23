@@ -1,14 +1,10 @@
 // Commands: node-ops (extracted from index.js)
 import chalk from 'chalk';
-import { execSync } from 'child_process';
-import { join } from 'path';
 import {
   program,
-  DAEMON_PORT,
   checkConnection,
   fastEval,
-  getDaemonToken,
-  isInSafeMode,
+  shouldUseNativeEval,
   runFigmaUse
 } from '../lib/cli-core.js';
 
@@ -25,7 +21,7 @@ node
   .action(async (nodeId, options) => {
     await checkConnection();
 
-    if (await isInSafeMode()) {
+    if (await shouldUseNativeEval()) {
       const maxDepth = parseInt(options.depth) || 3;
       const code = `(async () => {
         const maxDepth = ${maxDepth};
@@ -67,7 +63,7 @@ node
   .action(async (nodeId) => {
     await checkConnection();
 
-    if (await isInSafeMode()) {
+    if (await shouldUseNativeEval()) {
       const code = `(async () => {
         const targetId = ${nodeId ? `"${nodeId}"` : 'null'};
         const nodes = targetId
@@ -126,17 +122,7 @@ node
   .action(async (nodeIds) => {
     await checkConnection();
 
-    // Check if we're in Safe Mode (plugin only, no CDP)
-    let useDaemon = false;
-    try {
-      const healthToken = getDaemonToken();
-      const healthHeader = healthToken ? ` -H "X-Daemon-Token: ${healthToken}"` : '';
-      const healthRes = execSync(`curl -s${healthHeader} http://127.0.0.1:${DAEMON_PORT}/health`, { encoding: 'utf8', timeout: 2000 });
-      const health = JSON.parse(healthRes);
-      useDaemon = health.plugin && !health.cdp;
-    } catch {}
-
-    if (useDaemon) {
+    if (await shouldUseNativeEval()) {
       // Safe Mode: use native Figma API
       const code = `(async () => {
         const ids = ${JSON.stringify(nodeIds)};
@@ -171,17 +157,7 @@ node
   .action(async (nodeIds) => {
     await checkConnection();
 
-    // Check if we're in Safe Mode
-    let useDaemon = false;
-    try {
-      const healthToken = getDaemonToken();
-      const healthHeader = healthToken ? ` -H "X-Daemon-Token: ${healthToken}"` : '';
-      const healthRes = execSync(`curl -s${healthHeader} http://127.0.0.1:${DAEMON_PORT}/health`, { encoding: 'utf8', timeout: 2000 });
-      const health = JSON.parse(healthRes);
-      useDaemon = health.plugin && !health.cdp;
-    } catch {}
-
-    if (useDaemon) {
+    if (await shouldUseNativeEval()) {
       // Safe Mode: use native Figma API
       const code = `(async () => {
         const ids = ${JSON.stringify(nodeIds)};

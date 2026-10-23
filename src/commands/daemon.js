@@ -7,6 +7,7 @@ import {
   DAEMON_PID_FILE,
   DAEMON_PORT,
   daemonExec,
+  ensureDaemonRunning,
   getDaemonToken,
   getTokenStatus,
   isDaemonRunning,
@@ -18,16 +19,17 @@ import {
 
 program
   .command('tabs')
-  .description('List open Figma design tabs (CDP mode)')
+  .description('List connected Figma design tabs and Safe Mode plugin files')
   .action(async () => {
     try {
+      await ensureDaemonRunning();
       const tabs = await daemonExec('files');
       if (!tabs.length) {
-        console.log(chalk.yellow('No Figma design tabs are open.'));
+        console.log(chalk.yellow('No Figma design files are connected.'));
         return;
       }
       for (const tab of tabs) {
-        console.log(`${tab.default ? '*' : ' '} ${tab.id}  ${tab.title}${tab.selected ? '  (selected)' : ''}`);
+        console.log(`${tab.default ? '*' : ' '} ${tab.id}  ${tab.title} [${tab.mode || 'yolo'}]${tab.selected ? '  (selected)' : ''}`);
       }
       console.log(chalk.gray('Use: figma-cli tab <tab-id>  |  figma-cli tab auto'));
     } catch (error) {
@@ -41,10 +43,40 @@ program
   .description('Select the Figma tab for subsequent CLI commands; use auto to reset')
   .action(async (tabId) => {
     try {
+      await ensureDaemonRunning();
       const result = await daemonExec('use-file', { tabId });
       console.log(result.selected === null
         ? 'Using the default Figma tab.'
         : `Using ${result.title} (${result.id}).`);
+    } catch (error) {
+      console.error(chalk.red('✗ ' + error.message));
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('events')
+  .description('Show recent console, selection and document events for connected Figma files')
+  .option('--tab <id>', 'Show one file ID from figma-cli tabs')
+  .option('--limit <n>', 'Maximum events per file', '50')
+  .option('--json', 'Output as JSON')
+  .option('--follow', 'Keep streaming new events')
+  .action(async (options) => {
+    try {
+      await ensureDaemonRunning();
+      let after = 0;
+      do {
+        const files = await daemonExec('events', { tabId: options.tab, limit: Number(options.limit), after });
+        if (options.json) {
+          if (options.follow) for (const file of files) for (const event of file.events) console.log(JSON.stringify({ file: { id: file.id, title: file.title }, ...event }));
+          else console.log(JSON.stringify(files, null, 2));
+        } else for (const file of files) {
+          if (file.events.length) console.log(`${file.title} (${file.id})`);
+          for (const event of file.events) console.log(`  ${event.time} ${event.type}: ${JSON.stringify(event.data)}`);
+        }
+        for (const file of files) for (const event of file.events) after = Math.max(after, event.seq);
+        if (options.follow) await new Promise(resolve => setTimeout(resolve, 2000));
+      } while (options.follow);
     } catch (error) {
       console.error(chalk.red('✗ ' + error.message));
       process.exitCode = 1;

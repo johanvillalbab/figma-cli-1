@@ -5,7 +5,7 @@ import {
   program,
   checkConnection,
   fastEval,
-  isInSafeMode,
+  shouldUseNativeEval,
   runFigmaUse
 } from '../lib/cli-core.js';
 
@@ -20,7 +20,12 @@ program
   .action(async (options) => {
     await checkConnection();
 
-    if (await isInSafeMode()) {
+    if (await shouldUseNativeEval()) {
+      if (options.fix) {
+        console.error(chalk.red('✗ lint --fix is unavailable for a selected tab or Safe Mode file. Run lint without --fix.'));
+        process.exitCode = 1;
+        return;
+      }
       // Safe Mode: native implementation
       const code = `(async () => {
         const issues = [];
@@ -94,7 +99,7 @@ analyze
   .action(async (options) => {
     await checkConnection();
 
-    if (await isInSafeMode()) {
+    if (await shouldUseNativeEval()) {
       const code = `(async () => {
         const colors = new Map();
         function rgbToHex(r, g, b) {
@@ -146,7 +151,7 @@ analyze
   .action(async (options) => {
     await checkConnection();
 
-    if (await isInSafeMode()) {
+    if (await shouldUseNativeEval()) {
       const code = `(async () => {
         const styles = new Map();
         function checkNode(node) {
@@ -193,7 +198,7 @@ analyze
   .action(async (options) => {
     await checkConnection();
 
-    if (await isInSafeMode()) {
+    if (await shouldUseNativeEval()) {
       const code = `(async () => {
         const gaps = new Map();
         const paddings = new Map();
@@ -241,7 +246,7 @@ analyze
   .action(async (options) => {
     await checkConnection();
 
-    if (await isInSafeMode()) {
+    if (await shouldUseNativeEval()) {
       const code = `(async () => {
         const patterns = new Map();
         function getSignature(node) {

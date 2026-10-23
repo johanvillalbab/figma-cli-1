@@ -122,30 +122,36 @@ figma-ds-cli talks to your Figma Desktop in one of two ways. Claude picks one du
 
 ## figma-cli vs the MCP servers (the question I get asked most)
 
-People keep asking how figma-cli differs from **Figma's official MCP** and from **figma-console-mcp**. Short version: they talk to Figma through the **cloud REST API**, figma-cli talks to **Figma Desktop directly on your machine**. That one architectural choice changes everything downstream.
+People keep asking how figma-cli differs from **Figma's official MCP** and from **figma-console-mcp**. figma-cli talks to Figma Desktop through CDP or its local plugin. figma-console-mcp also has a local plugin bridge, alongside Figma API features; the official MCP uses Figma's hosted services. The connection and rate limits depend on the operation.
 
-| | **figma-cli** | Figma official MCP / figma-console-mcp |
-|---|---|---|
-| **How it connects** | CDP → your local Figma Desktop | Figma REST API (cloud) |
-| **Figma token** | not needed | required (`figd_…`) |
-| **Figma rate limit** | **none** — there are no API calls to throttle | yes — can bottleneck heavy automation / AI on Free or Starter plans |
-| **Works offline** | yes | no |
-| **Setup** | one `connect` command | token + plugin/bridge + (for some) port wrangling |
+| | **figma-cli** | **figma-console-mcp** | **Figma official MCP** |
+|---|---|---|---|
+| **How it connects** | Local CDP or plugin bridge | Local plugin bridge and Figma API | Hosted Figma services |
+| **Figma token** | Not needed for local commands | Depends on the feature | Depends on the integration |
+| **Figma API rate limit** | Local commands do not use it | Applies to API backed features | Applies to API backed features |
+| **Works offline** | Local commands can | Local plugin operations can | Hosted operations cannot |
 
-### Why "no rate limit" is a real, structural advantage
-Figma's APIs are rate-limited, and on Free or Starter plans those limits can become a bottleneck for large-scale automation or AI workflows. Any tool built on that API — Figma's own MCP included — runs into the same ceiling. figma-cli sidesteps it entirely because it never calls the API: it drives Figma Desktop locally over CDP.
+### Local commands and API limits
+Figma's APIs are rate-limited. Local figma-cli commands use CDP or the plugin bridge, so they do not consume Figma API requests. figma-console-mcp also supports local plugin operations; its API backed features have different limits.
 
-### The quieter advantage: it costs your AI far fewer tokens
-figma-cli's commands are terse and there are **no large tool schemas loaded into the AI's context**. Driving an MCP server, by contrast, loads its instructions + dozens of tool schemas and returns verbose JSON. Measured like-for-like in one session (tokens ≈ bytes ÷ 4, approximate):
+### Short commands for agents
 
-| Task | figma-cli | API-based MCP |
-|---|---:|---:|
-| Cold start → first component | **~140 tok** | ~1,600 tok (**~11×**) |
-| Generate one token-bound component | **~68 tok** | ~256–556 tok (**~4–8×**) |
+The CLI exposes compact terminal commands. Token use depends on the agent, command output and MCP tools loaded for a given workflow. The commands are designed so an agent can run them and verify results from a terminal.
 
-On a fixed AI plan (e.g. Claude Pro), fewer tokens per task means you get more done before hitting *your AI's* usage limits too — and a leaner context means the AI keeps its facts straight instead of "forgetting" node IDs as the window fills.
+### Multiple files, token sync and health checks
 
-**Bottom line:** local, no token, no rate limit, no cloud round-trip, and the lowest token cost — built for fast, reliable building and verifying from Claude Code or Cursor.
+```bash
+figma-cli tabs                         # CDP tabs and Safe Mode plugin files
+figma-cli tab <id>                     # route subsequent commands to one file
+figma-cli eval --all-tabs 'figma.root.name'
+figma-cli events --json                # recent console, selection and document events per file
+figma-cli export dtcg tokens.json      # all modes and aliases, with source identity
+figma-cli tokens sync-import tokens.json --dry-run
+figma-cli tokens sync-import tokens.json
+figma-cli design-health --tokens tokens.json --json
+```
+
+`tokens sync-import` merges changes and preserves variables absent from the token file. The export refuses to overwrite a file from another Figma source or discard extra tokens unless `--replace` is passed. Both commands require a live local connection. The legacy `tokens import` command remains for simple JSON presets; use `sync-import` for DTCG round trips.
 
 ---
 

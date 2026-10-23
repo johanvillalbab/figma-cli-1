@@ -98,9 +98,6 @@
             setStatus('Connected', 'connected');
             parent.postMessage({ pluginMessage: { type: 'connected' } }, '*');
 
-            // Send hello
-            ws.send(JSON.stringify({ type: 'hello', mode: 'plugin', version: '1.3.0' }));
-
             // Start keepalive (ping every 10s)
             startKeepalive();
           };
@@ -201,6 +198,15 @@
     window.onmessage = (event) => {
       const msg = event.data.pluginMessage;
       if (!msg) return;
+
+      if (msg.type === 'file-info' && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'hello', mode: 'plugin', version: '1.3.0',
+          id: msg.id, fileKey: msg.fileKey, title: msg.title }));
+      }
+
+      if (msg.type === 'event' && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'event', eventType: msg.eventType, data: msg.data }));
+      }
 
       if (msg.type === 'result') {
         // Send result back to CLI via WebSocket

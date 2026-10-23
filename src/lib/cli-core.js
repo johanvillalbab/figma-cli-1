@@ -412,6 +412,12 @@ async function fastRender(jsx) {
 
 // Helper: run figma-use commands with Node 20+ compatibility warning
 function runFigmaUse(cmd, options = {}) {
+  // figma-use connects to the first design tab and cannot honor our daemon routing.
+  // Fail closed if a caller has not switched to the daemon-backed implementation.
+  const health = getDaemonHealthSync();
+  if (health?.selectedTabId || health?.mode === 'safe') {
+    throw new Error('This command cannot use figma-use with the selected file or Safe Mode. Use a daemon-backed command.');
+  }
   try {
     execSync(cmd, { stdio: options.stdio || 'inherit', timeout: options.timeout || 60000 });
   } catch (error) {
@@ -653,6 +659,12 @@ function figmaUse(args, options = {}) {
   }
 
   if (args === 'status' || args.startsWith('status')) {
+    if (getDaemonHealthSync()?.selectedTabId) {
+      const name = figmaEvalSync('figma.root.name');
+      const status = `Connected to Figma\n  File: ${name}`;
+      if (!options.silent) console.log(status);
+      return status;
+    }
     try {
       const port = getCdpPort();
       const result = execSync(`curl -s http://localhost:${port}/json`, { encoding: 'utf8', stdio: 'pipe' });
@@ -893,17 +905,25 @@ function handleEvalError(e) {
   process.exit(1);
 }
 
-// Helper: Check if Safe Mode (plugin only)
-async function isInSafeMode() {
+function getDaemonHealthSync() {
   try {
     const healthToken = getDaemonToken();
     const healthHeader = healthToken ? ` -H "X-Daemon-Token: ${healthToken}"` : '';
     const healthRes = execSync(`curl -s${healthHeader} http://127.0.0.1:${DAEMON_PORT}/health`, { encoding: 'utf8', timeout: 2000 });
     const health = JSON.parse(healthRes);
-    return health.plugin && !health.cdp;
+    return health;
   } catch {
-    return false;
+    return null;
   }
+}
+
+// Native eval preserves the selected tab and also works through Safe Mode.
+function shouldUseNativeEvalForHealth(health) {
+  return !!(health && (health.mode === 'safe' || health.selectedTabId));
+}
+
+async function shouldUseNativeEval() {
+  return shouldUseNativeEvalForHealth(getDaemonHealthSync());
 }
 
 export {
@@ -920,6 +940,7 @@ export {
   checkConnection,
   checkConnectionSync,
   daemonExec,
+  ensureDaemonRunning,
   detectWrapperSplit,
   fastEval,
   fastRender,
@@ -939,7 +960,8 @@ export {
   hexToRgb,
   isDaemonRunning,
   isFigmaPatched,
-  isInSafeMode,
+  shouldUseNativeEval,
+  shouldUseNativeEvalForHealth,
   isVarRef,
   killFigma,
   loadConfig,

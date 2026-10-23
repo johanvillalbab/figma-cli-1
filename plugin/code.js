@@ -6,6 +6,30 @@
  */
 
 // Show minimal UI (needed for WebSocket connection)
+const bridgeSessionId = `plugin:${Date.now().toString(36)}:${Math.random().toString(36).slice(2)}`;
+function emitEvent(type, data) {
+  try { figma.ui.postMessage({ type: 'event', eventType: type, data }); } catch {}
+}
+
+figma.on('selectionchange', () => emitEvent('selection', {
+  page: figma.currentPage.name,
+  nodes: figma.currentPage.selection.map(n => ({ id: n.id, name: n.name, type: n.type }))
+}));
+figma.on('documentchange', event => emitEvent('document', {
+  total: event.documentChanges.length,
+  changes: event.documentChanges.slice(0, 50).map(c => ({ id: c.id, type: c.type, properties: (c.properties || []).slice(0, 20) }))
+}));
+
+for (const level of ['log', 'warn', 'error']) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => {
+    emitEvent('console', { type: level, message: args.map(a => {
+      try { return typeof a === 'string' ? a : JSON.stringify(a); }
+      catch { return String(a); }
+    }).join(' ') });
+    original(...args);
+  };
+}
 figma.showUI(__html__, {
   width: 160,
   height: 72,
@@ -73,6 +97,7 @@ figma.ui.onmessage = async (msg) => {
   }
 
   if (msg.type === 'connected') {
+    figma.ui.postMessage({ type: 'file-info', id: bridgeSessionId, fileKey: figma.fileKey || null, title: figma.root.name });
     figma.notify('✓ Figma DS CLI connected', { timeout: 2000 });
   }
 
