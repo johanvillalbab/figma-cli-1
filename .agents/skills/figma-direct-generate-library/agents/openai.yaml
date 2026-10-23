@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct Library"
+  short_description: "Build token-bound Figma libraries with figma-cli."
+  default_prompt: "Use $figma-direct-generate-library to build a component library in the open Figma file."

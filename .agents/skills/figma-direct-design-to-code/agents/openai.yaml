@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct Design to Code"
+  short_description: "Implement designs from an open Figma file."
+  default_prompt: "Use $figma-direct-design-to-code to inspect this Figma node and implement it in code."

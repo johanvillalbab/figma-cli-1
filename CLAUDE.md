@@ -72,6 +72,10 @@ CLI that controls Figma Desktop directly. No API key needed.
 7. **NEVER delete existing nodes** - users may have components they want to keep!
 8. **Always verify after creating:** `figma-cli verify "NODE_ID"`
 
+## Local agent skills
+
+Reusable direct-Figma workflows live under `.agents/skills/`. Load the relevant `figma-direct-*` skill before acting; they use this CLI and Figma Desktop directly, never Figma MCP. Use `figma-direct-use` as the base skill for a Design-file operation, and pair it with the library, design, verification, FigJam, or motion skill that matches the request.
+
 ### 🎨 THEMED vs SHADCN (read the user's intent)
 
 When the user asks for components, two distinct universes exist:

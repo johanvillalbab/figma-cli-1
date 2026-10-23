@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct Motion"
+  short_description: "Author Figma motion directly with figma-cli."
+  default_prompt: "Use $figma-direct-use-motion to add and verify motion in the open Figma file."

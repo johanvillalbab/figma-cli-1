@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct SwiftUI"
+  short_description: "Translate SwiftUI and Figma without Figma MCP."
+  default_prompt: "Use $figma-direct-swiftui to translate this SwiftUI view and Figma design."

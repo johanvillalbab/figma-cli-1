@@ -1,0 +1,4 @@
+interface:
+  display_name: "FigJam Direct Use"
+  short_description: "Create and edit FigJam boards through figma-cli."
+  default_prompt: "Use $figma-direct-use-figjam to create and organize this FigJam board."

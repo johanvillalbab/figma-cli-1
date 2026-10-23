@@ -6,7 +6,49 @@
  */
 
 import WebSocket from 'ws';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { homedir } from 'os';
+import { join } from 'path';
 import { getCdpPort } from './figma-patch.js';
+
+// Iconify SVGs are immutable per name+size, so cache them in memory and on
+// disk: repeat renders skip the network, and a slow API can't hold a render
+// hostage until the daemon's 90s timeout.
+const ICON_CACHE_DIR = join(homedir(), '.figma-ds-cli', 'icons');
+const ICON_FETCH_TIMEOUT_MS = 5000;
+const iconSvgCache = new Map();
+
+export async function fetchIconSvg(iconName, size = 24) {
+  const key = `${iconName}@${size}`;
+  if (iconSvgCache.has(key)) return iconSvgCache.get(key);
+
+  const [prefix, name] = iconName.split(':');
+  // Only plain Iconify ids touch the disk (no path traversal via the name).
+  const diskFile = /^[a-z0-9-]+$/i.test(prefix || '') && /^[a-z0-9-]+$/i.test(name || '')
+    ? join(ICON_CACHE_DIR, `${prefix}--${name}--${size}.svg`)
+    : null;
+  if (diskFile) {
+    try {
+      const svg = readFileSync(diskFile, 'utf8');
+      iconSvgCache.set(key, svg);
+      return svg;
+    } catch {}
+  }
+
+  const response = await fetch(`https://api.iconify.design/${prefix}/${name}.svg?width=${size}&height=${size}`, {
+    signal: AbortSignal.timeout(ICON_FETCH_TIMEOUT_MS)
+  });
+  if (!response.ok) return null;
+  const svg = await response.text();
+  iconSvgCache.set(key, svg);
+  if (diskFile) {
+    try {
+      mkdirSync(ICON_CACHE_DIR, { recursive: true });
+      writeFileSync(diskFile, svg);
+    } catch {}
+  }
+  return svg;
+}
 
 /**
  * Visible fallback colors for shadcn semantic token names (Zinc light theme).
@@ -133,41 +175,43 @@ export class FigmaClient {
 
       this.ws.on('open', async () => {
         try {
-          // Enable Runtime to discover execution contexts (needed for Figma v39+)
+          // Enable Runtime to discover execution contexts (needed for Figma v39+).
+          // Chrome emits executionContextCreated for every existing context
+          // before it answers Runtime.enable, so the lookup can start right
+          // away; the short retries only cover a context still being created.
           await this.send('Runtime.enable');
 
-          // Give time for context events to arrive
-          await new Promise(r => setTimeout(r, 500));
+          const findFigmaContext = async () => {
+            // First try default context (works on older Figma versions)
+            const defaultCheck = await this.send('Runtime.evaluate', {
+              expression: 'typeof figma !== "undefined"',
+              returnByValue: true
+            });
+            if (defaultCheck.result?.result?.value === true) return null;
 
-          // First try default context (works on older Figma versions)
-          const defaultCheck = await this.send('Runtime.evaluate', {
-            expression: 'typeof figma !== "undefined"',
-            returnByValue: true
-          });
-
-          if (defaultCheck.result?.result?.value === true) {
-            // figma is in default context (older Figma)
-            this.executionContextId = null;
-            resolve(this);
-            return;
-          }
-
-          // Figma v39+: search all execution contexts for figma
-          for (const ctx of executionContexts) {
-            try {
-              const check = await this.send('Runtime.evaluate', {
-                expression: 'typeof figma !== "undefined"',
-                contextId: ctx.id,
-                returnByValue: true
-              });
-
-              if (check.result?.result?.value === true) {
-                this.executionContextId = ctx.id;
-                resolve(this);
-                return;
+            // Figma v39+: search all execution contexts for figma
+            for (const ctx of executionContexts) {
+              try {
+                const check = await this.send('Runtime.evaluate', {
+                  expression: 'typeof figma !== "undefined"',
+                  contextId: ctx.id,
+                  returnByValue: true
+                });
+                if (check.result?.result?.value === true) return ctx.id;
+              } catch {
+                // Context may have been destroyed, skip
               }
-            } catch {
-              // Context may have been destroyed, skip
+            }
+            return undefined;
+          };
+
+          for (let attempt = 0; attempt < 6; attempt++) {
+            if (attempt > 0) await new Promise(r => setTimeout(r, 100));
+            const contextId = await findFigmaContext();
+            if (contextId !== undefined) {
+              this.executionContextId = contextId;
+              resolve(this);
+              return;
             }
           }
 
@@ -708,11 +752,8 @@ export class FigmaClient {
     const svgMap = {};
     const fetches = [...iconNames].map(async (iconName) => {
       try {
-        const [prefix, name] = iconName.split(':');
-        const response = await fetch(`https://api.iconify.design/${prefix}/${name}.svg?width=24&height=24`);
-        if (response.ok) {
-          svgMap[iconName] = await response.text();
-        }
+        const svg = await fetchIconSvg(iconName, 24);
+        if (svg) svgMap[iconName] = svg;
       } catch (e) {
         // Silently fall back to placeholder
       }
@@ -753,6 +794,7 @@ export class FigmaClient {
         'arc', 'arcStart', 'innerRadius', 'opacity', 'x', 'y', 'position'],
       Circle: null,    // alias of Ellipse, filled below
       Image: ['name', 'w', 'h', 'width', 'height', 'bg', 'fill', 'rounded', 'radius', 'opacity', 'x', 'y', 'position'],
+      SVG: ['name', 'data', 'x', 'y', 'position'],
       Slot: ['name', 'flex', 'gap', 'p', 'px', 'py', 'padding', 'w', 'h', 'width', 'height', 'bg', 'fill'],
       Instance: ['name', 'component', 'id', 'w', 'h', 'width', 'height'],
     };
@@ -787,7 +829,7 @@ export class FigmaClient {
     };
 
     const warnings = [];
-    const tagRegex = /<(Frame|Text|Icon|Rect|Rectangle|Ellipse|Circle|Image|Slot|Instance)([^>]*?)\/?>/g;
+    const tagRegex = /<(Frame|Text|Icon|Rect|Rectangle|Ellipse|Circle|Image|SVG|Slot|Instance)([^>]*?)\/?>/g;
     let m;
     while ((m = tagRegex.exec(jsx)) !== null) {
       const tag = m[1];
@@ -975,6 +1017,17 @@ export class FigmaClient {
         imgProps._index = idx;
         children.push(imgProps);
       }
+    }
+
+    // Inline SVG payloads are base64 so arbitrary XML never enters the JSX parser.
+    const svgRegex = /<SVG\s+([^>]*?)\s*\/>/g;
+    while ((match = svgRegex.exec(childrenStr)) !== null) {
+      const idx = match.index;
+      if (frameRanges.some(r => idx >= r.start && idx < r.end)) continue;
+      const svgProps = this.parseProps(match[1]);
+      svgProps._type = 'svg';
+      svgProps._index = idx;
+      children.push(svgProps);
     }
 
     // Parse Icon elements (self-closing) - creates placeholder
@@ -1254,6 +1307,7 @@ export class FigmaClient {
           const frameFillCode = fBg ? this.generateFillCode(fBg, `el${idx}`) : { code: `el${idx}.fills = [];`, usesVars: false };
           const frameStrokeCode = fStroke ? this.generateStrokeCode(fStroke, `el${idx}`, fStrokeWidth, fStrokeAlign) : { code: '' };
           const frameEffectsCode = this.generateEffectsCode(item, `el${idx}`);
+          const frameImageCode = item.image ? this.generateImageFillCode(item.image, `el${idx}`, item.imageScale) : '';
 
           // `stretch={true}` fills the CROSS axis of the parent (vertical when
           // the parent is a row, horizontal when it's a col). This was a known
@@ -1308,6 +1362,7 @@ export class FigmaClient {
         el${idx}.paddingRight = ${fPr};`}
         el${idx}.cornerRadius = ${fRounded};
         ${frameFillCode.code}
+        ${frameImageCode}
         ${frameStrokeCode.code}
         ${frameEffectsCode}
         ${isNone ? '' : `el${idx}.primaryAxisAlignItems = '${fJustifyVal}';
@@ -1328,7 +1383,10 @@ export class FigmaClient {
         } catch (e) {}` : ''}
         ${nestedChildren}
         ${fWrap && fFlex === 'row' && fWrapGap > 0 ? `el${idx}.counterAxisSpacing = ${fWrapGap};` : ''}
-        ${effectivePosition === 'absolute' ? `
+        ${parentIsNone && effectivePosition === 'absolute' ? `
+          el${idx}.x = ${fAbsoluteX};
+          el${idx}.y = ${fAbsoluteY};
+        ` : effectivePosition === 'absolute' ? `
           el${idx}.layoutPositioning = 'ABSOLUTE';
           (function applyEdges() {
             const pp = el${idx}.parent;
@@ -1434,6 +1492,18 @@ export class FigmaClient {
         ${ellStrokeCode.code}
         ${hasArc ? `try { el${idx}.arcData = { startingAngle: ${startRad}, endingAngle: ${endRad}, innerRadius: ${inner} }; } catch(e) {}` : ''}
         ${parentVar}.appendChild(el${idx});`;
+        } else if (item._type === 'svg') {
+          const svg = Buffer.from(item.data || '', 'base64').toString('utf8');
+          if (!/^<svg[\s>]/i.test(svg.trim())) throw new Error('SVG data must contain an SVG document');
+          const parentIsNone = ['none', 'stack', 'free'].includes(parentFlex);
+          const absolute = item.position === 'absolute';
+          return `
+        const el${idx} = figma.createNodeFromSvg(${JSON.stringify(svg)});
+        el${idx}.name = ${JSON.stringify(item.name || 'SVG')};
+        el${idx}.fills = [];
+        ${parentVar}.appendChild(el${idx});
+        ${absolute && !parentIsNone ? `el${idx}.layoutPositioning = 'ABSOLUTE';` : ''}
+        ${absolute ? `el${idx}.x = ${Number(item.x) || 0}; el${idx}.y = ${Number(item.y) || 0};` : ''}`;
         } else if (item._type === 'image') {
           // Image placeholder (gray rectangle with image icon concept)
           const iWidth = item.w || item.width || 200;
@@ -1758,8 +1828,9 @@ export class FigmaClient {
         ${smartPosCode}
 
         let __currentNode = 'root';
+        let frame;
         try {
-        const frame = figma.createFrame();
+        frame = figma.createFrame();
         __currentNode = ${JSON.stringify(name)};
         frame.name = ${JSON.stringify(name)};
         frame.resize(${width}, ${height});
@@ -1800,7 +1871,7 @@ export class FigmaClient {
           ? { id: frame.id, name: frame.name, unresolved: __unresolved }
           : { id: frame.id, name: frame.name };
         } catch(e) {
-          frame.remove();
+          if (frame) frame.remove();
           throw new Error('[Node: ' + __currentNode + '] ' + e.message);
         }
       })()
@@ -2773,11 +2844,8 @@ export class FigmaClient {
    */
   async createIcon(iconName, options = {}) {
     const { size = 24, color = '#000000', x, y } = options;
-    const [prefix, name] = iconName.split(':');
-
-    // Fetch SVG from Iconify API
-    const response = await fetch(`https://api.iconify.design/${prefix}/${name}.svg?width=${size}&height=${size}`);
-    const svg = await response.text();
+    const svg = await fetchIconSvg(iconName, size);
+    if (!svg) throw new Error(`Icon not found on Iconify: ${iconName}`);
 
     return await this.eval(`
       (function() {

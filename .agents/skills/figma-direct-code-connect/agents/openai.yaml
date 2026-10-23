@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct Code Connect"
+  short_description: "Map Figma component properties to local code."
+  default_prompt: "Use $figma-direct-code-connect to create Code Connect templates for this component."

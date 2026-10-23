@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct Motion to Code"
+  short_description: "Implement Figma motion in a local codebase."
+  default_prompt: "Use $figma-direct-implement-motion to inspect this Figma motion and implement it in code."

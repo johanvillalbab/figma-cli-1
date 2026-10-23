@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct Use"
+  short_description: "Operate an open Figma file with figma-cli."
+  default_prompt: "Use $figma-direct-use to safely inspect and update the open Figma Desktop file."

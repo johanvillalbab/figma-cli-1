@@ -1,0 +1,4 @@
+interface:
+  display_name: "FigJam Direct Diagram"
+  short_description: "Build diagrams directly in an open FigJam board."
+  default_prompt: "Use $figma-direct-generate-diagram to create this diagram in the open FigJam board."

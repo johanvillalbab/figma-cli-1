@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct Slides"
+  short_description: "Prepare Figma Slides work without Figma MCP."
+  default_prompt: "Use $figma-direct-use-slides to assess this Figma Slides task for direct work."

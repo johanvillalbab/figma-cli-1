@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct File Preflight"
+  short_description: "Prepare a Figma Desktop file for direct CLI work."
+  default_prompt: "Use $figma-direct-create-file to prepare a Figma Desktop document for direct work."

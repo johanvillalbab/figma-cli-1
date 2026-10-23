@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct Design"
+  short_description: "Create Figma screens directly with figma-cli."
+  default_prompt: "Use $figma-direct-generate-design to compose this screen in the open Figma file."

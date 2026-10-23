@@ -1,0 +1,4 @@
+interface:
+  display_name: "Figma Direct Verify"
+  short_description: "Audit a Figma library with figma-cli."
+  default_prompt: "Use $figma-direct-verify to audit the selected Figma page or library."
