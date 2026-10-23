@@ -386,15 +386,11 @@ async function ensureDaemonRunning(maxWaitMs = 5000) {
   return false;
 }
 
-// Fast eval via daemon (falls back to direct connection)
+// Fast eval via daemon (uses direct CDP only when no daemon is available)
 async function fastEval(code) {
   // Try daemon first (auto-restarting it if it idle-shut-down)
   if (await ensureDaemonRunning()) {
-    try {
-      return await daemonExec('eval', { code });
-    } catch (e) {
-      // Continue to fallback
-    }
+    return await daemonExec('eval', { code });
   }
 
   // Fall back to direct connection
@@ -402,15 +398,11 @@ async function fastEval(code) {
   return await client.eval(code);
 }
 
-// Fast render via daemon (falls back to direct connection)
+// Fast render via daemon (uses direct CDP only when no daemon is available)
 async function fastRender(jsx) {
   // Try daemon first (auto-restarting it if it idle-shut-down)
   if (await ensureDaemonRunning()) {
-    try {
-      return await daemonExec('render', { jsx });
-    } catch (e) {
-      // Continue to fallback
-    }
+    return await daemonExec('render', { jsx });
   }
 
   // Fall back to direct connection
@@ -591,18 +583,9 @@ function figmaEvalSync(code) {
       if (data.error) throw new Error(data.error);
       return data.result;
     } catch (e) {
-      // Check if we're in Safe Mode (plugin only) - don't fall through to CDP
-      try {
-        const healthToken = getDaemonToken();
-        const healthHeader = healthToken ? ` -H "X-Daemon-Token: ${healthToken}"` : '';
-        const healthRes = execSync(`curl -s${healthHeader} http://127.0.0.1:${DAEMON_PORT}/health`, { encoding: 'utf8', timeout: 2000 });
-        const health = JSON.parse(healthRes);
-        if (health.plugin && !health.cdp) {
-          // Safe Mode - re-throw the error, don't try CDP fallback
-          throw e;
-        }
-      } catch {}
-      // Fall through to direct CDP connection
+      // The daemon may have a selected tab. A direct fallback would silently
+      // execute in the first tab, and could repeat a partially completed write.
+      throw e;
     }
   }
 

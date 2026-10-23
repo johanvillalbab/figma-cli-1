@@ -40,7 +40,8 @@ const SEMANTIC_VAR_DEFAULTS = {
 };
 
 export class FigmaClient {
-  constructor() {
+  constructor({ WebSocketImpl = WebSocket } = {}) {
+    this.WebSocketImpl = WebSocketImpl;
     this.ws = null;
     this.msgId = 0;
     this.callbacks = new Map();
@@ -72,6 +73,11 @@ export class FigmaClient {
       .map(p => ({ title: p.title, id: p.id, url: p.url, wsUrl: p.webSocketDebuggerUrl }));
   }
 
+  static async listDesignPages() {
+    const pages = await this.listPages();
+    return pages.filter(p => /figma\.com\/(design|file)\//.test(p.url));
+  }
+
   /**
    * Check if Figma is running with debug port
    */
@@ -89,7 +95,7 @@ export class FigmaClient {
   /**
    * Connect to a Figma design file
    */
-  async connect(pageTitle = null, { timeoutMs = 15000 } = {}) {
+  async connect(pageTitle = null, { timeoutMs = 15000, pageId = null } = {}) {
     const port = getCdpPort();
     const response = await fetch(`http://localhost:${port}/json`);
     const pages = await response.json();
@@ -100,14 +106,18 @@ export class FigmaClient {
       p.url && /figma\.com\/(design|file)\//.test(p.url);
 
     let page;
-    if (pageTitle) {
+    if (pageId) {
+      page = pages.find(p => p.id === pageId && isDesignPage(p));
+    } else if (pageTitle) {
       page = pages.find(p => p.title.includes(pageTitle) && isDesignPage(p));
     } else {
       page = pages.find(isDesignPage);
     }
 
     if (!page) {
-      throw new Error('No Figma design file open. Please open a design file in Figma Desktop.');
+      throw new Error(pageId
+        ? `Figma tab ${pageId} is not open. Run "figma-cli tabs" to see available tabs.`
+        : 'No Figma design file open. Please open a design file in Figma Desktop.');
     }
 
     this.pageTitle = page.title;
@@ -118,7 +128,7 @@ export class FigmaClient {
     this.fileType = typeMatch ? typeMatch[1] : 'unknown';
 
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(page.webSocketDebuggerUrl);
+      this.ws = new this.WebSocketImpl(page.webSocketDebuggerUrl);
       const executionContexts = [];
 
       this.ws.on('open', async () => {

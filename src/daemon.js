@@ -127,12 +127,49 @@ function resetIdleTimer() {
 // Start the idle timer immediately
 resetIdleTimer()
 
-// CDP Client (Yolo Mode)
-let cdpClient = null;
-let isCdpConnecting = false;
+// CDP connections are keyed by tab ID so each open design keeps its own context.
+const cdpClients = new Map();
+const cdpConnecting = new Map();
+let defaultTabId = null;
+let selectedTabId = null;
 let lastHealthCheck = 0;
 let lastHealthResult = false;
+let lastHealthTabId = null;
 const HEALTH_CACHE_MS = 30000; // Cache health for 30 seconds (reduces overhead)
+
+async function listDesignTabs() {
+  const ClientClass = await getFigmaClient();
+  const pages = await ClientClass.listDesignPages();
+  return pages.map(({ id, title, url }) => ({
+    id, title, url,
+    fileKey: url.match(/figma\.com\/(?:design|file)\/([^/?#]+)/)?.[1] || null,
+    selected: id === selectedTabId,
+    default: id === (selectedTabId || defaultTabId)
+  }));
+}
+
+function dropCdpClient(tabId) {
+  const client = cdpClients.get(tabId);
+  if (client) {
+    try { client.close(); } catch {}
+    cdpClients.delete(tabId);
+  }
+  lastHealthResult = false;
+}
+
+function dropAllCdpClients() {
+  for (const id of cdpClients.keys()) dropCdpClient(id);
+  defaultTabId = null;
+}
+
+async function resolveTabId(tabId) {
+  if (tabId) return tabId;
+  if (selectedTabId) return selectedTabId;
+  const tabs = await listDesignTabs();
+  if (!tabs.length) throw new Error('No Figma design file open. Please open a design file in Figma Desktop.');
+  if (!tabs.some(tab => tab.id === defaultTabId)) defaultTabId = tabs[0].id;
+  return defaultTabId;
+}
 
 // Plugin Client (Safe Mode)
 let pluginWs = null;
@@ -141,74 +178,63 @@ let pluginMsgId = 0;
 
 // ============ CDP MODE (YOLO) ============
 
-async function isCdpHealthy(forceCheck = false) {
+async function isCdpHealthy(forceCheck = false, tabId = selectedTabId || defaultTabId) {
   // Quick WebSocket state check (no network call)
-  if (!cdpClient || !cdpClient.ws) return false;
-  if (cdpClient.ws.readyState !== 1) return false;
+  const client = cdpClients.get(tabId);
+  if (!client?.ws || client.ws.readyState !== 1) return false;
 
   // Use cached result if recent (avoids constant eval calls)
   const now = Date.now();
-  if (!forceCheck && now - lastHealthCheck < HEALTH_CACHE_MS) {
+  if (!forceCheck && tabId === lastHealthTabId && now - lastHealthCheck < HEALTH_CACHE_MS) {
     return lastHealthResult;
   }
 
   try {
     const result = await Promise.race([
-      cdpClient.eval('1'), // Simple eval, just check connection works
+      client.eval('1'), // Simple eval, just check connection works
       new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
     ]);
     lastHealthCheck = now;
     lastHealthResult = result === 1;
+    lastHealthTabId = tabId;
     return lastHealthResult;
   } catch {
     lastHealthCheck = now;
     lastHealthResult = false;
+    lastHealthTabId = tabId;
     return false;
   }
 }
 
-async function getCdpClient() {
-  // Fast path: if we have a client with open WebSocket, use it
-  if (cdpClient && cdpClient.ws && cdpClient.ws.readyState === 1) {
-    return cdpClient;
-  }
-
-  // WebSocket closed, need to reconnect
-  if (cdpClient) {
-    console.log('[daemon] CDP WebSocket closed, reconnecting...');
-    try { cdpClient.close(); } catch {}
-    cdpClient = null;
-    lastHealthResult = false;
-  }
-
-  // Wait if another connection attempt is in progress
-  if (isCdpConnecting) {
-    while (isCdpConnecting) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    // The other attempt may have failed and left cdpClient null —
-    // fall through and try connecting ourselves instead of returning null.
-    if (cdpClient && cdpClient.ws && cdpClient.ws.readyState === 1) {
-      return cdpClient;
-    }
-  }
-
-  isCdpConnecting = true;
-  try {
+async function getCdpClient(tabId = null) {
+  const id = await resolveTabId(tabId);
+  const existing = cdpClients.get(id);
+  if (existing?.ws?.readyState === 1) return existing;
+  if (cdpConnecting.has(id)) return cdpConnecting.get(id);
+  dropCdpClient(id);
+  const pending = (async () => {
     const ClientClass = await getFigmaClient();
-    cdpClient = new ClientClass();
-    await cdpClient.connect();
-    lastHealthCheck = Date.now();
-    lastHealthResult = true;
-    console.log('[daemon] Connected to Figma via CDP (Yolo Mode)');
-  } finally {
-    isCdpConnecting = false;
-  }
-  return cdpClient;
+    const client = new ClientClass();
+    try {
+      await client.connect(null, { pageId: id });
+      cdpClients.set(id, client);
+      lastHealthCheck = Date.now();
+      lastHealthResult = true;
+      lastHealthTabId = id;
+      console.log(`[daemon] Connected to Figma tab ${id} via CDP`);
+      return client;
+    } catch (error) {
+      client.close();
+      throw error;
+    }
+  })();
+  cdpConnecting.set(id, pending);
+  try { return await pending; }
+  finally { cdpConnecting.delete(id); }
 }
 
-async function evalViaCdp(code) {
-  const client = await getCdpClient();
+async function evalViaCdp(code, tabId = null) {
+  const client = await getCdpClient(tabId);
   return client.eval(code);
 }
 
@@ -303,7 +329,11 @@ function wrapCodeIfNeeded(code) {
   return code;
 }
 
-async function executeEval(code) {
+async function executeEval(code, tabId = null) {
+  if (tabId || selectedTabId) {
+    if (MODE === 'plugin') throw new Error('Tab targeting requires CDP mode. Run figma-cli connect without --safe.');
+    return evalViaCdp(wrapCodeIfNeeded(code), tabId);
+  }
   // Auto mode: prefer plugin if connected, fallback to CDP
   if (MODE === 'auto') {
     if (isPluginConnected()) {
@@ -328,8 +358,9 @@ function getMode() {
   if (MODE === 'plugin') return 'safe';
   if (MODE === 'cdp') return 'yolo';
   // Auto: return what's actually connected
+  if (selectedTabId) return 'yolo';
   if (isPluginConnected()) return 'safe';
-  if (cdpClient) return 'yolo';
+  if (cdpClients.size) return 'yolo';
   return 'disconnected';
 }
 
@@ -368,6 +399,7 @@ async function handleRequest(req, res) {
       mode: mode,
       plugin: pluginConnected,
       cdp: cdpHealthy,
+      selectedTabId,
       idleTimeoutMs: IDLE_TIMEOUT_MS
     }));
     return;
@@ -376,10 +408,7 @@ async function handleRequest(req, res) {
   // Force reconnect (CDP only)
   if (req.url === '/reconnect') {
     try {
-      if (cdpClient) {
-        try { cdpClient.close(); } catch {}
-        cdpClient = null;
-      }
+      dropAllCdpClients();
       await getCdpClient();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'reconnected', mode: 'yolo' }));
@@ -412,7 +441,7 @@ async function handleRequest(req, res) {
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          const { action, code, jsx, jsxArray, gap, vertical, collection } = payload;
+          const { action, code, jsx, jsxArray, gap, vertical, collection, tabId } = payload;
           let result;
 
           const execWithTimeout = async (fn, timeoutMs = 30000) => {
@@ -425,9 +454,41 @@ async function handleRequest(req, res) {
           };
 
           switch (action) {
-            case 'eval':
-              result = await execWithTimeout(() => executeEval(code));
+            case 'files':
+              if (MODE === 'plugin') throw new Error('Listing Figma tabs requires CDP mode. Run figma-cli connect without --safe.');
+              result = await listDesignTabs();
               break;
+            case 'use-file': {
+              if (MODE === 'plugin') throw new Error('Tab selection requires CDP mode. Run figma-cli connect without --safe.');
+              if (tabId === 'auto') {
+                selectedTabId = null;
+                result = { selected: null };
+                break;
+              }
+              const tabs = await listDesignTabs();
+              const tab = tabs.find(item => item.id === tabId);
+              if (!tab) throw new Error(`Figma tab ${tabId} is not open. Run "figma-cli tabs" to see available tabs.`);
+              await getCdpClient(tab.id);
+              selectedTabId = tab.id;
+              result = tab;
+              break;
+            }
+            case 'eval':
+              result = await execWithTimeout(() => executeEval(code, tabId));
+              break;
+            case 'eval-all': {
+              if (MODE === 'plugin') throw new Error('Multi-tab evaluation requires CDP mode. Run figma-cli connect without --safe.');
+              const tabs = await listDesignTabs();
+              if (!tabs.length) throw new Error('No Figma design tabs are open.');
+              result = await Promise.all(tabs.map(async tab => {
+                try {
+                  return { ...tab, result: await execWithTimeout(() => evalViaCdp(wrapCodeIfNeeded(code), tab.id)) };
+                } catch (error) {
+                  return { ...tab, error: error.message };
+                }
+              }));
+              break;
+            }
             case 'render': {
               // Parse JSX to code, then execute via unified eval (works with both CDP and Plugin)
               const ClientClass = await getFigmaClient();
@@ -459,6 +520,9 @@ async function handleRequest(req, res) {
           lastError = error;
           console.log(`[daemon] Attempt ${attempt + 1} failed: ${error.message}`);
 
+          if (['files', 'use-file', 'eval-all'].includes(payload.action) ||
+              /Figma tab .* is not open|requires CDP mode/.test(error.message)) break;
+
           // For Safe Mode: wait briefly for potential reconnect
           if (attempt < MAX_RETRIES && MODE === 'plugin') {
             console.log('[daemon] Safe Mode: waiting for plugin reconnect...');
@@ -476,22 +540,19 @@ async function handleRequest(req, res) {
           // broken. If CDP is healthy, the error came from the executed code
           // itself — retrying would just re-run it (and a timed-out render
           // would create duplicate nodes).
-          if (attempt < MAX_RETRIES && MODE !== 'plugin' && !isPluginConnected()) {
-            if (await isCdpHealthy(true)) {
+          if (attempt < MAX_RETRIES && MODE !== 'plugin' && (!isPluginConnected() || selectedTabId || tabId)) {
+            const targetId = tabId || selectedTabId || defaultTabId;
+            if (await isCdpHealthy(true, targetId)) {
               console.log('[daemon] CDP healthy — error is not connection-related, not retrying');
               break;
             }
             console.log('[daemon] Reconnecting CDP before retry...');
-            // Don't tear down a connection another request is currently building
-            if (!isCdpConnecting) {
-              try { if (cdpClient) cdpClient.close(); } catch {}
-              cdpClient = null;
-            }
+            if (targetId && !cdpConnecting.has(targetId)) dropCdpClient(targetId);
             // Backoff: 300ms after first failure, 1s after second
             await new Promise(r => setTimeout(r, attempt === 0 ? 300 : 1000));
             try {
-              await getCdpClient();
-              if (!(await isCdpHealthy(true))) {
+              await getCdpClient(targetId);
+              if (!(await isCdpHealthy(true, targetId))) {
                 console.log('[daemon] CDP still unhealthy after reconnect');
               }
             } catch (reconnectError) {
@@ -600,7 +661,7 @@ process.on('SIGINT', shutdown);
 function shutdown() {
   console.log('[daemon] Shutting down...');
   if (idleTimer) clearTimeout(idleTimer);
-  if (cdpClient) cdpClient.close();
+  dropAllCdpClients();
   if (pluginWs) pluginWs.close();
   httpServer.close(() => process.exit(0));
   // Force exit after 3 seconds if graceful shutdown hangs

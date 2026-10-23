@@ -300,7 +300,14 @@ program
   .command('eval [code]')
   .description('Execute JavaScript in Figma plugin context')
   .option('-f, --file <path>', 'Run code from file instead of argument')
+  .option('--tab <id>', 'Target one open Figma tab by ID (see figma-cli tabs)')
+  .option('--all-tabs', 'Run the code concurrently in every open Figma design tab')
   .action(async (code, options) => {
+    if (options.tab && options.allTabs) {
+      console.error(chalk.red('✗ Use either --tab or --all-tabs.'));
+      process.exitCode = 1;
+      return;
+    }
     checkConnection();
     let jsCode = code ? unescapeShell(code) : code;
 
@@ -318,6 +325,23 @@ program
       return;
     }
 
+    // Explicit tab routing requires the daemon; a direct fallback would run in
+    // the first tab and could read or write the wrong file.
+    if (options.tab || options.allTabs) {
+      try {
+        const result = await daemonExec(options.allTabs ? 'eval-all' : 'eval', {
+          code: jsCode,
+          ...(options.tab ? { tabId: options.tab } : {})
+        });
+        console.log(typeof result === 'object' ? JSON.stringify(result, null, 2) : result);
+        if (options.allTabs && result.some(tab => tab.error)) process.exitCode = 1;
+      } catch (error) {
+        console.error(chalk.red('✗ ' + error.message));
+        process.exitCode = 1;
+      }
+      return;
+    }
+
     // Always prefer async daemon (more reliable, no shell timeout issues)
     if (isDaemonRunning()) {
       try {
@@ -327,20 +351,9 @@ program
         }
         return;
       } catch (e) {
-        // Check if this is a connection/daemon error vs user code error
-        const isConnectionError = e.message.includes('ECONNREFUSED') ||
-                                  e.message.includes('fetch failed') ||
-                                  e.message.includes('network') ||
-                                  e.message.includes('timeout') ||
-                                  e.message.includes('disconnected');
-        if (isConnectionError) {
-          // Connection/daemon error - fall back to sync path
-          console.log(chalk.yellow('⚠ Daemon error, trying sync path...'));
-        } else {
-          // User code error - display directly, don't fall back
-          console.log(chalk.red('✗ ' + e.message));
-          return;
-        }
+        console.log(chalk.red('✗ ' + e.message));
+        process.exitCode = 1;
+        return;
       }
     }
 

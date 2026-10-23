@@ -270,6 +270,22 @@ node src/index.js daemon reconnect         # Reconnect to Figma
 node src/index.js files                    # List open Figma files (JSON)
 ```
 
+### Multiple Figma tabs (CDP mode)
+
+```bash
+node src/index.js tabs                     # List open design tabs and their IDs
+node src/index.js tab <tab-id>              # Target this tab for subsequent commands
+node src/index.js tab auto                  # Return to the default tab
+node src/index.js eval --tab <tab-id> "return figma.currentPage.name"
+node src/index.js eval --all-tabs "return figma.currentPage.name"
+```
+
+`eval --all-tabs` runs the same code in each open design tab concurrently and
+returns a result or error for each tab. The code can change a document, so use
+read-only expressions for inspection. Tab selection lasts for the current daemon
+session. These commands require CDP mode (`connect` without `--safe`); Safe Mode
+still has one plugin connection.
+
 ### Troubleshooting Auth Errors
 
 If you see "Unauthorized: Invalid or missing token":

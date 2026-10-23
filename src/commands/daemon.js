@@ -16,6 +16,41 @@ import {
 
 // ============ DAEMON ============
 
+program
+  .command('tabs')
+  .description('List open Figma design tabs (CDP mode)')
+  .action(async () => {
+    try {
+      const tabs = await daemonExec('files');
+      if (!tabs.length) {
+        console.log(chalk.yellow('No Figma design tabs are open.'));
+        return;
+      }
+      for (const tab of tabs) {
+        console.log(`${tab.default ? '*' : ' '} ${tab.id}  ${tab.title}${tab.selected ? '  (selected)' : ''}`);
+      }
+      console.log(chalk.gray('Use: figma-cli tab <tab-id>  |  figma-cli tab auto'));
+    } catch (error) {
+      console.error(chalk.red('✗ ' + error.message));
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command('tab <tab-id>')
+  .description('Select the Figma tab for subsequent CLI commands; use auto to reset')
+  .action(async (tabId) => {
+    try {
+      const result = await daemonExec('use-file', { tabId });
+      console.log(result.selected === null
+        ? 'Using the default Figma tab.'
+        : `Using ${result.title} (${result.id}).`);
+    } catch (error) {
+      console.error(chalk.red('✗ ' + error.message));
+      process.exitCode = 1;
+    }
+  });
+
 const daemon = program
   .command('daemon')
   .description('Manage the speed daemon');

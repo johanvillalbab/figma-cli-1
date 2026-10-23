@@ -418,7 +418,7 @@ program
         const healthHeader = healthToken ? ` -H "X-Daemon-Token: ${healthToken}"` : '';
         const healthRes = execSync(`curl -s${healthHeader} http://127.0.0.1:${DAEMON_PORT}/health`, { encoding: 'utf8', timeout: 2000 });
         const health = JSON.parse(healthRes);
-        useDaemonRender = health.plugin && !health.cdp; // Safe Mode
+        useDaemonRender = (health.plugin && !health.cdp) || !!health.selectedTabId;
       } catch {}
 
       let result;
